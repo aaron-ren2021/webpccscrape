@@ -1,0 +1,32 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "TZ": "Asia/Taipei",
+
+    "AZURE_STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true",
+    "AZURE_TABLE_NAME": "BidNotifyState",
+    "AZURE_BLOB_CONTAINER": "bid-state",
+    "AZURE_BLOB_NAME": "notified_state.json",
+
+    "EMAIL_TO": "user1@example.com,user2@example.com",
+    "EMAIL_SUBJECT_PREFIX": "[教育資訊標案監控]",
+
+    "ACS_CONNECTION_STRING": "",
+    "ACS_EMAIL_SENDER": "DoNotReply@<your-domain>",
+
+    "SMTP_HOST": "smtp.example.com",
+    "SMTP_PORT": "587",
+    "SMTP_USERNAME": "",
+    "SMTP_PASSWORD": "",
+    "SMTP_FROM": "noreply@example.com",
+    "SMTP_USE_TLS": "true",
+
+    "USER_AGENT": "Mozilla/5.0 (compatible; bid-monitor/1.0; +https://example.com)",
+    "ENABLE_PLAYWRIGHT_FALLBACK": "false",
+
+    "TAIWANBUYING_URL": "https://www.taiwanbuying.com.tw/",
+    "GOV_URL": "https://web.pcc.gov.tw/pis/"
+  }
+}

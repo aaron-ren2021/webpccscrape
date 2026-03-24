@@ -1,0 +1,10 @@
+azure-functions==1.22.0
+azure-data-tables==12.6.0
+azure-storage-blob==12.25.1
+azure-communication-email==1.0.0
+beautifulsoup4==4.12.3
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+requests==2.32.3
+playwright==1.52.0
+pytest==8.3.5
