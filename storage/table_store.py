@@ -3,10 +3,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from azure.core.exceptions import ResourceExistsError
-from azure.data.tables import TableServiceClient
-
 from core.models import BidRecord
+
+
+def _import_azure_tables():
+    try:
+        from azure.core.exceptions import ResourceExistsError
+        from azure.data.tables import TableServiceClient
+        return TableServiceClient, ResourceExistsError
+    except ImportError as exc:
+        raise RuntimeError(
+            "azure-data-tables is not installed. "
+            "Run: pip install azure-data-tables"
+        ) from exc
 
 
 class TableStateStore:
@@ -15,11 +24,12 @@ class TableStateStore:
             raise ValueError("missing storage connection string")
         self.logger = logger
         self.table_name = table_name
+        TableServiceClient, ResourceExistsError = _import_azure_tables()
         service = TableServiceClient.from_connection_string(conn_str=connection_string)
         try:
             service.create_table(table_name)
-        except ResourceExistsError:
-            pass
+        except Exception:
+            pass  # table already exists or ResourceExistsError
         self.client = service.get_table_client(table_name)
 
     def get_notified_keys(self) -> set[str]:

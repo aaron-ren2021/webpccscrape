@@ -104,6 +104,17 @@ class Settings:
     dry_run: bool = False
     preview_html_path: str = ""
 
+    # --- AI classification ---
+    enable_ai_classification: bool = False
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    ai_model: str = ""  # e.g. "gpt-4o-mini" or "claude-sonnet-4-20250514"
+
+    # --- GitHub Issue tracking ---
+    github_token: str = ""
+    github_repo: str = ""  # e.g. "aaron-ren2021/webpccscrape"
+    github_labels: list[str] = field(default_factory=list)
+
     @property
     def has_acs(self) -> bool:
         return bool(self.acs_connection_string and self.acs_email_sender)
@@ -173,4 +184,13 @@ class Settings:
             smtp_use_ssl=_parse_bool(os.getenv("SMTP_USE_SSL"), False),
             dry_run=_parse_bool(os.getenv("DRY_RUN"), False),
             preview_html_path=os.getenv("PREVIEW_HTML_PATH", ""),
+            # --- AI classification ---
+            enable_ai_classification=_parse_bool(os.getenv("ENABLE_AI_CLASSIFICATION"), False),
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+            ai_model=os.getenv("AI_MODEL", ""),
+            # --- GitHub Issue tracking ---
+            github_token=os.getenv("GITHUB_TOKEN", ""),
+            github_repo=os.getenv("GITHUB_REPO", ""),
+            github_labels=_parse_csv(os.getenv("GITHUB_LABELS")),
         )

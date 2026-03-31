@@ -1,0 +1,5 @@
+# 原有的 tw-procurement-bot 排程（8:30）
+30 8 * * * cd /home/xcloud/tw-procurement-bot && . .venv/bin/activate && set -a && . ./.env && set +a && python -m tw_procurement_bot run >> logs/cron.log 2>&1
+
+# webpccscrape 標案監控排程（8:35）
+30 8 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1

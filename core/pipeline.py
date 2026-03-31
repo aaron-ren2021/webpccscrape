@@ -7,7 +7,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from crawler.gov import fetch_bids as fetch_gov_bids
+from crawler.gov import enrich_detail as enrich_gov_detail
 from crawler.taiwanbuying import fetch_bids as fetch_taiwanbuying_bids
+from core.ai_classifier import AIClassification, build_ai_clients, classify_bids_batch
 from core.config import Settings
 from core.dedup import deduplicate_bids
 from core.filters import filter_bids
@@ -15,6 +17,7 @@ from core.formatter import render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
 from core.normalize import build_bid_uid
 from notify.dispatcher import send_email
+from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
 from storage.table_store import TableStateStore
 
@@ -51,6 +54,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             logger.exception("source_failed", extra={"source": source_name, "error": str(exc)})
             source_status.append(SourceRunStatus(source=source_name, success=False, count=0, error=str(exc)))
 
+    # --- Phase 1: keyword-based filter + dedup ---
     filtered = filter_bids(all_records)
     deduped = deduplicate_bids(filtered)
 
@@ -62,6 +66,46 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             amount=record.amount_value,
             amount_raw=record.amount_raw,
         )
+
+    # --- Phase 1.5: Enrich detail fields (budget, bid bond) for filtered records ---
+    gov_records = [r for r in deduped if r.source == "gov_pcc"]
+    if gov_records:
+        try:
+            enrich_gov_detail(gov_records, settings, logger)
+            logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+        except Exception as exc:
+            logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+
+    # --- Phase 2: AI-enhanced classification (optional) ---
+    ai_enabled = getattr(settings, 'enable_ai_classification', False)
+    if ai_enabled and deduped:
+        try:
+            openai_client, anthropic_client = build_ai_clients(settings)
+            if openai_client or anthropic_client:
+                ai_model = getattr(settings, 'ai_model', '')
+                classifications = classify_bids_batch(
+                    deduped,
+                    openai_client=openai_client,
+                    anthropic_client=anthropic_client,
+                    model=ai_model,
+                    log=logger,
+                )
+                for record, cls in zip(deduped, classifications):
+                    record.ai_edu_score = cls.edu_score
+                    record.ai_it_score = cls.it_score
+                    record.ai_priority = cls.priority
+                    record.ai_summary = cls.ai_summary
+                    record.ai_reason = f"{cls.edu_reason} | {cls.it_reason}"
+                    record.ai_model = cls.model_used
+                    if cls.suggested_tags:
+                        for tag in cls.suggested_tags:
+                            if tag not in record.tags:
+                                record.tags.append(tag)
+                logger.info("ai_classification_done", extra={"count": len(classifications)})
+            else:
+                logger.info("ai_classification_skipped_no_client")
+        except Exception as exc:
+            logger.warning("ai_classification_failed", extra={"error": str(exc)})
 
     state_store = _resolve_state_store(settings, logger)
     notified_keys = state_store.get_notified_keys()
@@ -83,7 +127,16 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             )
         new_records.append(record)
 
-    new_records.sort(key=lambda item: (item.bid_date or today, item.amount_value or 0), reverse=True)
+    # Sort by AI priority first (if available), then date and amount
+    priority_order = {"high": 3, "medium": 2, "low": 1, "": 0}
+    new_records.sort(
+        key=lambda item: (
+            priority_order.get(item.ai_priority, 0),
+            item.bid_date or today,
+            item.amount_value or 0,
+        ),
+        reverse=True,
+    )
 
     notification_backend = "none"
     notification_sent = False
@@ -107,6 +160,22 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         except Exception as exc:
             logger.exception("notification_failed", extra={"error": str(exc)})
             errors.append(f"notification_failed: {exc}")
+
+        # --- GitHub Issue tracking for high-priority bids ---
+        if getattr(settings, 'github_token', '') and getattr(settings, 'github_repo', ''):
+            high_priority = [r for r in new_records if r.ai_priority == "high"]
+            if high_priority:
+                try:
+                    created = create_bid_issues(
+                        records=high_priority,
+                        token=settings.github_token,
+                        repo=settings.github_repo,
+                        labels=getattr(settings, 'github_labels', []),
+                        logger=logger,
+                    )
+                    logger.info("github_issues_created", extra={"count": created})
+                except Exception as exc:
+                    logger.warning("github_issues_failed", extra={"error": str(exc)})
 
         if persist_state and notification_sent:
             try:

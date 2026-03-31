@@ -45,6 +45,71 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     return records
 
 
+def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    """Fetch detail pages for gov_pcc records and extract budget_amount / bid_bond."""
+    session = build_session(settings)
+    for record in records:
+        if record.source != SOURCE_NAME or not record.url:
+            continue
+        try:
+            html = request_html(
+                session=session,
+                url=record.url,
+                method="GET",
+                timeout_seconds=settings.request_timeout_seconds,
+                logger=logger,
+            )
+            soup = parse_html(html)
+            _extract_detail_fields(soup, record)
+        except Exception as exc:
+            logger.warning("gov_detail_fetch_failed", extra={"url": record.url, "error": str(exc)})
+
+
+def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
+    """Extract 預算金額 and 押標金 from a gov.pcc detail page."""
+    import re
+
+    for td in soup.find_all("td"):
+        text = td.get_text(strip=True)
+
+        # --- 預算金額（精確匹配，排除「是否公開」） ---
+        if text == "預算金額":
+            nxt = td.find_next_sibling("td")
+            if nxt:
+                val = nxt.get_text(strip=True)
+                amount_match = re.search(r"[\d,]+", val)
+                if amount_match:
+                    record.budget_amount = f"NT$ {amount_match.group()} 元"
+
+        elif text == "預算金額是否公開":
+            nxt = td.find_next_sibling("td")
+            if nxt:
+                val = nxt.get_text(strip=True)
+                if val.startswith("否"):
+                    record.budget_amount = "未公開"
+                elif not record.budget_amount:
+                    # 公開但沒有獨立的預算金額列
+                    record.budget_amount = "已公開（金額見詳細頁）"
+
+        # --- 押標金 ---
+        elif text == "是否須繳納押標金":
+            nxt = td.find_next_sibling("td")
+            if nxt:
+                val = nxt.get_text(" ", strip=True)
+                if val.startswith("否"):
+                    record.bid_bond = "免繳"
+                else:
+                    pct_match = re.search(r"押標金額度[：:]\s*([\d,.]+%)", val)
+                    if pct_match:
+                        record.bid_bond = pct_match.group(1)
+                    else:
+                        amt_match = re.search(r"押標金額度[：:]\s*([\d,]+)", val)
+                        if amt_match:
+                            record.bid_bond = f"NT$ {amt_match.group(1)} 元"
+                        else:
+                            record.bid_bond = "需繳納"
+
+
 def _parse_records(html: str, settings: Settings) -> list[BidRecord]:
     soup = parse_html(html)
 

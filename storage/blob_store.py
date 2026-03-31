@@ -4,10 +4,18 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
-from azure.storage.blob import BlobServiceClient
-
 from core.models import BidRecord
+
+
+def _import_azure_blob():
+    try:
+        from azure.storage.blob import BlobServiceClient
+        return BlobServiceClient
+    except ImportError as exc:
+        raise RuntimeError(
+            "azure-storage-blob is not installed. "
+            "Run: pip install azure-storage-blob"
+        ) from exc
 
 
 class BlobStateStore:
@@ -17,12 +25,13 @@ class BlobStateStore:
         self.logger = logger
         self.blob_name = blob_name
 
+        BlobServiceClient = _import_azure_blob()
         service = BlobServiceClient.from_connection_string(connection_string)
         self.container_client = service.get_container_client(container)
         try:
             self.container_client.create_container()
-        except ResourceExistsError:
-            pass
+        except Exception:
+            pass  # container already exists or ResourceExistsError
 
     def get_notified_keys(self) -> set[str]:
         data = self._load()
@@ -53,8 +62,10 @@ class BlobStateStore:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
                 return parsed
-        except ResourceNotFoundError:
-            return {"keys": {}}
         except json.JSONDecodeError:
             self.logger.warning("blob_state_invalid_json_reset")
+        except Exception as exc:
+            if type(exc).__name__ == "ResourceNotFoundError":
+                return {"keys": {}}
+            raise
         return {"keys": {}}

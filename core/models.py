@@ -23,6 +23,18 @@ class BidRecord:
     uid: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Detail page fields
+    budget_amount: str = ""
+    bid_bond: str = ""
+
+    # AI classification fields
+    ai_edu_score: int = 0
+    ai_it_score: int = 0
+    ai_priority: str = ""
+    ai_summary: str = ""
+    ai_reason: str = ""
+    ai_model: str = ""
+
     def __post_init__(self) -> None:
         if not self.original_source:
             self.original_source = self.source

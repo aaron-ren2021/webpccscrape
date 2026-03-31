@@ -41,7 +41,19 @@ def send_email_via_smtp(
             smtp.starttls()
             smtp.ehlo()
         if username:
-            smtp.login(username, password)
+            try:
+                smtp.login(username, password)
+            except smtplib.SMTPAuthenticationError as exc:
+                # Common for Microsoft 365 tenants when Authenticated SMTP (basic auth) is disabled.
+                raw = (exc.smtp_error or b"")
+                raw_text = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                if "5.7.139" in raw_text or "basic authentication is disabled" in raw_text.lower():
+                    raise RuntimeError(
+                        "SMTP authentication failed: Microsoft 365 has disabled basic auth for SMTP. "
+                        "Enable 'Authenticated SMTP' for this mailbox (and tenant) or use another email backend. "
+                        "If you use MFA, ensure you're using an app password where supported."
+                    ) from exc
+                raise
         smtp.sendmail(sender, recipients, msg.as_string())
     finally:
         smtp.quit()

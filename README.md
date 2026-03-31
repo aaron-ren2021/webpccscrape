@@ -1,7 +1,15 @@
 # Azure 教育資訊標案自動監控系統
 
 ## 1. 專案目的
-本專案會每天定時抓取兩個來源的標案資料（台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。若當日無新案件則不寄信，僅在 log 記錄 `no new bids`。
+本專案會每天定時抓取兩個來源的標案資料（台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+
+**郵件內容包含**：
+- 標案標題、機關名稱、公告日期、截止日期
+- **預算金額**：從政府電子採購網詳細頁面抓取（如未公開則顯示「未公開」）
+- **押標金**：押標金百分比或金額（如未提供則顯示「無提供」）
+- 聯絡資訊、決標方式等
+
+若當日無新案件則不寄信，僅在 log 記錄 `no new bids`。
 
 ## 2. 架構說明
 - 執行環境：Azure Functions (Python Timer Trigger)
@@ -12,6 +20,7 @@
 - 邏輯層：
   - 關鍵字篩選（教育單位 + 主題）
   - 精準去重 + 近似去重
+  - **詳細資料補充**：針對政府電子採購網標案，額外抓取詳細頁面以取得預算金額與押標金資訊
   - 新案判斷（未通知過）
 - 儲存層：
   - 優先 Azure Table Storage
@@ -90,7 +99,7 @@ pytest
 
 ### 6.1 crontab 定時排程
 
-若僅需在本地每天工作日 8:30 自動寄信，可用 crontab 設定：
+若需在本地每天工作日 8:30 自動寄信，可用 crontab 設定：
 
 ```bash
 crontab -e
@@ -99,13 +108,13 @@ crontab -e
 新增以下內容（假設 Python 路徑與專案路徑已正確）：
 
 ```
-30 8 * * 1-5 /usr/bin/python3 /你的路徑/webpccscrape/run_local.py
+30 8 * * 1-5 /home/xcloud/project/webpccscrape/venv/bin/python /home/xcloud/project/webpccscrape/run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
 ```
 
 說明：
 - `30 8 * * 1-5` 代表每週一至五早上 8:30 執行
-- `/usr/bin/python3` 請依實際 Python 路徑調整
-- `/你的路徑/webpccscrape/run_local.py` 請改為實際專案路徑
+- `/home/xcloud/project/webpccscrape/venv/bin/python` 為虛擬環境內的 Python 路徑
+- `>> logs/cron.log 2>&1` 將輸出記錄到 logs/cron.log 檔案
 
 ### 6.2 SMTP 設定
 
