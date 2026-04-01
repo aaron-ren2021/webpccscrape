@@ -31,20 +31,37 @@ def parse_amount(value: str) -> Optional[float]:
     if not value:
         return None
     text = unicodedata.normalize("NFKC", value)
+    
+    # Define multipliers
     multiplier = 1.0
     if "億" in text:
         multiplier = 100000000.0
     elif "萬" in text:
         multiplier = 10000.0
-
-    match = DIGIT_PATTERN.search(text.replace(",", ""))
-    if not match:
-        return None
-    try:
-        amount = float(match.group(1))
-    except ValueError:
-        return None
-    return amount * multiplier
+    elif "千元" in text:
+        multiplier = 1000.0
+    
+    # Enhanced regex patterns for various formats
+    patterns = [
+        r"預算金額[\uff1a:]​*新?臺?幣?​*(\d{1,3}(,\d{3})*)​*元?",  # 預算金額：新臺幣 X 元
+        r"底價[\uff1a:]​*(\d{1,3}(,\d{3})*)",  # 底價：X
+        r"NT\$?​*(\d{1,3}(,\d{3})*)",  # NT$ X or NT X
+        r"([0-9][0-9,\.]*)",  # Fallback: any digit sequence
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text.replace(",", ""))
+        if match:
+            try:
+                # Extract first group (the number)
+                num_str = match.group(1) if "(" in pattern else match.group(0)
+                num_str = num_str.replace(",", "").replace(".", "")
+                amount = float(num_str)
+                return amount * multiplier
+            except (ValueError, IndexError):
+                continue
+    
+    return None
 
 
 def parse_bid_date(value: str) -> Optional[date]:

@@ -82,6 +82,9 @@ class Settings:
     gov_summary_selectors: list[str] = field(default_factory=lambda: [".summary", ".desc", "td:nth-child(4)"])
     gov_link_selectors: list[str] = field(default_factory=lambda: ["a"])
 
+    g0v_api_url: str = "https://pcc-api.openfun.app/api/listbydate"
+    g0v_enabled: bool = True
+
     azure_storage_connection_string: str = ""
     azure_table_name: str = "BidNotifyState"
     azure_blob_container: str = "bid-state"
@@ -167,6 +170,8 @@ class Settings:
             gov_summary_selectors=_parse_csv(os.getenv("GOV_SUMMARY_SELECTORS"))
             or [".summary", ".desc", "td:nth-child(4)"],
             gov_link_selectors=_parse_csv(os.getenv("GOV_LINK_SELECTORS")) or ["a"],
+            g0v_api_url=os.getenv("G0V_API_URL", "https://pcc-api.openfun.app/api/listbydate"),
+            g0v_enabled=_parse_bool(os.getenv("G0V_ENABLED"), True),
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
             azure_table_name=os.getenv("AZURE_TABLE_NAME", "BidNotifyState"),
             azure_blob_container=os.getenv("AZURE_BLOB_CONTAINER", "bid-state"),

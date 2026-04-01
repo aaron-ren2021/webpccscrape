@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from crawler.gov import fetch_bids as fetch_gov_bids
 from crawler.gov import enrich_detail as enrich_gov_detail
 from crawler.taiwanbuying import fetch_bids as fetch_taiwanbuying_bids
+from crawler.g0v import fetch_bids as fetch_g0v_bids
 from core.ai_classifier import AIClassification, build_ai_clients, classify_bids_batch
 from core.config import Settings
 from core.dedup import deduplicate_bids
@@ -42,10 +43,17 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     source_status: list[SourceRunStatus] = []
     all_records: list[BidRecord] = []
 
-    for source_name, fn in [
+    # Define sources to fetch
+    sources = [
         ("taiwanbuying", fetch_taiwanbuying_bids),
         ("gov_pcc", fetch_gov_bids),
-    ]:
+    ]
+    
+    # Add g0v if enabled
+    if settings.g0v_enabled:
+        sources.append(("g0v", fetch_g0v_bids))
+
+    for source_name, fn in sources:
         try:
             records = fn(settings, logger)
             all_records.extend(records)

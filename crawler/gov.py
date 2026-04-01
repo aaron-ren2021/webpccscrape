@@ -10,7 +10,6 @@ from core.normalize import parse_amount, parse_bid_date
 
 from crawler.common import (
     build_session,
-    FieldExtractionStats,
     normalize_url,
     optional_playwright_fetch_html,
     parse_html,
@@ -129,7 +128,6 @@ def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
 
 def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord]:
     soup = parse_html(html)
-    stats = FieldExtractionStats()
 
     rows: list[Tag] = []
     for selector in settings.gov_row_selectors:
@@ -143,27 +141,16 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
 
     output: list[BidRecord] = []
     for row in rows:
-        title = pick_first_text(row, settings.gov_title_selectors, "title", logger) or row.get_text(" ", strip=True)
+        title = pick_first_text(row, settings.gov_title_selectors) or row.get_text(" ", strip=True)
         title = title[:300].strip()
         if not title:
             continue
 
-        stats.increment_total()
-        
-        org = pick_first_text(row, settings.gov_org_selectors, "organization", logger)
-        stats.record_field("organization", bool(org))
-        
-        date_text = pick_first_text(row, settings.gov_date_selectors, "date", logger)
-        stats.record_field("date", bool(date_text))
-        
-        amount_text = pick_first_text(row, settings.gov_amount_selectors, "amount", logger)
-        stats.record_field("amount", bool(amount_text))
-        
-        summary = pick_first_text(row, settings.gov_summary_selectors, "summary", logger)
-        stats.record_field("summary", bool(summary))
-        
-        link = pick_first_attr(row, settings.gov_link_selectors, "href", "link", logger)
-        stats.record_field("link", bool(link))
+        org = pick_first_text(row, settings.gov_org_selectors)
+        date_text = pick_first_text(row, settings.gov_date_selectors)
+        amount_text = pick_first_text(row, settings.gov_amount_selectors)
+        summary = pick_first_text(row, settings.gov_summary_selectors)
+        link = pick_first_attr(row, settings.gov_link_selectors, "href")
 
         bid_date = parse_bid_date(date_text)
         amount_value = parse_amount(amount_text)
@@ -183,8 +170,5 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
                 },
             )
         )
-    
-    # Log extraction statistics
-    stats.log_summary(logger, SOURCE_NAME)
     
     return output

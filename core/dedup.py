@@ -11,6 +11,7 @@ from core.normalize import amount_key, normalize_org, normalize_text
 SOURCE_PRIORITY = {
     "gov_pcc": 3,
     "taiwanbuying": 2,
+    "g0v": 1,
 }
 
 

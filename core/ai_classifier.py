@@ -22,6 +22,9 @@ CLASSIFICATION_PROMPT = """\
 - 摘要：{summary}
 - 類別：{category}
 - 金額：{amount}
+- 預算金額：{budget_amount}
+- 截止投標：{bid_deadline}
+- 開標時間：{bid_opening_time}
 
 請以 JSON 格式回覆以下分析結果：
 {{
@@ -39,8 +42,18 @@ CLASSIFICATION_PROMPT = """\
 
 判斷標準：
 1. 教育單位：包含大學、學院、學校、國中小、高中職、教育局/處，也包含間接相關（如「市政府教育局委辦」、「校園」等）
+
 2. 資訊相關：包含資訊設備、資訊服務、電腦、伺服器、網路、雲端、資安、軟體、機房，也包含新興詞彙如「數位轉型」、「智慧校園」、「AI」、「大數據」等
-3. 優先度：高金額(>500萬)或重要主題為 high，一般案件為 medium，小型/不太相關為 low
+
+3. 優先度判斷（綜合考量）：
+   - **單位層級權重**：大學 > 教育局 > 高中職 > 國中小
+   - **金額分層**：
+     * >1000萬 = 極高 (high)
+     * 500-1000萬 = 高 (high)
+     * 100-500萬 = 中 (medium)
+     * <100萬 = 低 (low 或 medium)
+   - **主題相關性**：資安/雲端 > 硬體設備 > 軟體授權 > 其他
+   - **時效性**：截止日期7天內 = 加急，可提升優先度
 
 僅回覆 JSON，不要加任何其他文字。"""
 
@@ -78,6 +91,9 @@ def classify_bid(
         summary=record.summary or "(無)",
         category=record.category or "(無)",
         amount=f"NT$ {int(record.amount_value):,}" if record.amount_value else record.amount_raw or "(未公開)",
+        budget_amount=record.budget_amount or "(無提供)",
+        bid_deadline=record.bid_deadline or "(無提供)",
+        bid_opening_time=record.bid_opening_time or "(無提供)",
     )
 
     if openai_client is not None:
