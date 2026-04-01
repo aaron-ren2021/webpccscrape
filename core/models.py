@@ -26,6 +26,8 @@ class BidRecord:
     # Detail page fields
     budget_amount: str = ""
     bid_bond: str = ""
+    bid_deadline: str = ""  # 截止投標時間
+    bid_opening_time: str = ""  # 開標時間
 
     # AI classification fields
     ai_edu_score: int = 0
