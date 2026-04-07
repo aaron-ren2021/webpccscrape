@@ -81,6 +81,7 @@ class Settings:
     gov_amount_selectors: list[str] = field(default_factory=lambda: [".amount", ".price", "td:nth-child(5)"])
     gov_summary_selectors: list[str] = field(default_factory=lambda: [".summary", ".desc", "td:nth-child(4)"])
     gov_link_selectors: list[str] = field(default_factory=lambda: ["a"])
+    gov_detail_delay_seconds: float = 2.0
 
     g0v_api_url: str = "https://pcc-api.openfun.app/api/listbydate"
     g0v_enabled: bool = True
@@ -170,6 +171,7 @@ class Settings:
             gov_summary_selectors=_parse_csv(os.getenv("GOV_SUMMARY_SELECTORS"))
             or [".summary", ".desc", "td:nth-child(4)"],
             gov_link_selectors=_parse_csv(os.getenv("GOV_LINK_SELECTORS")) or ["a"],
+            gov_detail_delay_seconds=_parse_float(os.getenv("GOV_DETAIL_DELAY_SECONDS"), 2.0),
             g0v_api_url=os.getenv("G0V_API_URL", "https://pcc-api.openfun.app/api/listbydate"),
             g0v_enabled=_parse_bool(os.getenv("G0V_ENABLED"), True),
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),

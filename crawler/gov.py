@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from bs4 import Tag
@@ -48,9 +49,17 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
 def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> None:
     """Fetch detail pages for gov_pcc records and extract budget_amount / bid_bond."""
     session = build_session(settings)
-    for record in records:
+    delay = settings.gov_detail_delay_seconds
+    captcha_count = 0
+
+    for idx, record in enumerate(records):
         if record.source != SOURCE_NAME or not record.url:
             continue
+
+        # Throttle requests to avoid triggering gov.pcc CAPTCHA
+        if idx > 0 and delay > 0:
+            time.sleep(delay)
+
         try:
             html = request_html(
                 session=session,
@@ -59,10 +68,46 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
                 timeout_seconds=settings.request_timeout_seconds,
                 logger=logger,
             )
+
+            if _is_captcha_page(html):
+                captcha_count += 1
+                logger.warning(
+                    "gov_detail_captcha_detected",
+                    extra={"url": record.url, "attempt": 1},
+                )
+                # Reset session and wait longer before retrying
+                session = build_session(settings)
+                time.sleep(delay * 3 + 2)
+
+                html = request_html(
+                    session=session,
+                    url=record.url,
+                    method="GET",
+                    timeout_seconds=settings.request_timeout_seconds,
+                    logger=logger,
+                )
+                if _is_captcha_page(html):
+                    logger.warning(
+                        "gov_detail_captcha_persistent",
+                        extra={"url": record.url},
+                    )
+                    continue
+
             soup = parse_html(html)
             _extract_detail_fields(soup, record)
         except Exception as exc:
             logger.warning("gov_detail_fetch_failed", extra={"url": record.url, "error": str(exc)})
+
+    if captcha_count:
+        logger.warning(
+            "gov_detail_captcha_summary",
+            extra={"captcha_hits": captcha_count, "total": len(records)},
+        )
+
+
+def _is_captcha_page(html: str) -> bool:
+    """Detect gov.pcc CAPTCHA (card-matching verification) page."""
+    return "驗證碼檢核" in html
 
 
 def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
