@@ -162,7 +162,20 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         _write_preview_html_if_needed(settings.preview_html_path, html_content, logger)
 
         try:
-            subject = render_email_subject(settings.email_subject_prefix, today, len(new_records))
+            # Find earliest deadline for subject line
+            earliest_deadline = None
+            for record in new_records:
+                if record.bid_date:
+                    if earliest_deadline is None or record.bid_date < earliest_deadline:
+                        earliest_deadline = record.bid_date
+            
+            subject = render_email_subject(
+                settings.email_subject_prefix,
+                today,
+                len(new_records),
+                earliest_deadline=earliest_deadline,
+            )
+            logger.info("email_subject_generated", extra={"subject": subject})
             notification_backend = send_email(settings, subject, html_content, logger)
             notification_sent = notification_backend in {"acs", "smtp", "dry_run"}
         except Exception as exc:
