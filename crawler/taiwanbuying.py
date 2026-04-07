@@ -15,6 +15,7 @@ from crawler.common import (
     parse_html,
     pick_first_attr,
     pick_first_text,
+    random_delay,
     request_html,
 )
 
@@ -30,6 +31,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
         params=settings.taiwanbuying_params,
         timeout_seconds=settings.request_timeout_seconds,
         logger=logger,
+        settings=settings,
     )
     records = _parse_records(html, settings)
 

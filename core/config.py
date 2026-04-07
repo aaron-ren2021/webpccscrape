@@ -54,6 +54,9 @@ class Settings:
     request_retry_total: int = 3
     request_backoff_factor: float = 0.8
 
+    request_delay_min: float = 2.0
+    request_delay_max: float = 5.0
+
     enable_playwright_fallback: bool = False
     playwright_timeout_ms: int = 20000
 
@@ -135,6 +138,8 @@ class Settings:
             request_timeout_seconds=_parse_int(os.getenv("REQUEST_TIMEOUT_SECONDS"), 20),
             request_retry_total=_parse_int(os.getenv("REQUEST_RETRY_TOTAL"), 3),
             request_backoff_factor=_parse_float(os.getenv("REQUEST_BACKOFF_FACTOR"), 0.8),
+            request_delay_min=_parse_float(os.getenv("REQUEST_DELAY_MIN"), 2.0),
+            request_delay_max=_parse_float(os.getenv("REQUEST_DELAY_MAX"), 5.0),
             enable_playwright_fallback=_parse_bool(os.getenv("ENABLE_PLAYWRIGHT_FALLBACK"), False),
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),

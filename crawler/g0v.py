@@ -8,7 +8,7 @@ from core.config import Settings
 from core.models import BidRecord
 from core.normalize import parse_amount, parse_bid_date
 
-from crawler.common import build_session, normalize_url
+from crawler.common import build_session, normalize_url, random_delay
 
 SOURCE_NAME = "g0v"
 

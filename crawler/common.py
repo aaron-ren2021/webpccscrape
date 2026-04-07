@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+import time
 from typing import Any, Optional
 from urllib.parse import urljoin
 
@@ -9,6 +11,23 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from core.config import Settings
+
+# --- User-Agent rotation pool ---
+_UA_POOL: list[str] = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+
+def _pick_ua(settings: Settings) -> str:
+    """Return a random UA from the pool, or the configured one if pool is bypassed."""
+    if settings.user_agent != Settings.user_agent:
+        # User explicitly set a custom UA via env; respect it.
+        return settings.user_agent
+    return random.choice(_UA_POOL)
 
 
 def build_session(settings: Settings) -> requests.Session:
@@ -25,8 +44,27 @@ def build_session(settings: Settings) -> requests.Session:
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-    session.headers.update({"User-Agent": settings.user_agent})
+    session.headers.update({
+        "User-Agent": _pick_ua(settings),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "max-age=0",
+    })
     return session
+
+
+def random_delay(settings: Settings, logger: Any = None) -> None:
+    """Sleep for a random interval between request_delay_min and request_delay_max."""
+    lo = settings.request_delay_min
+    hi = settings.request_delay_max
+    if hi <= 0:
+        return
+    wait = random.uniform(lo, hi)
+    if logger:
+        logger.debug("request_delay", extra={"wait_seconds": round(wait, 2)})
+    time.sleep(wait)
 
 
 def request_html(
@@ -36,7 +74,12 @@ def request_html(
     timeout_seconds: int,
     params: Optional[dict[str, Any]] = None,
     logger: Any = None,
+    settings: Optional[Settings] = None,
 ) -> str:
+    # Rotate User-Agent per request for extra stealth
+    if settings:
+        session.headers["User-Agent"] = _pick_ua(settings)
+
     if method == "POST":
         response = session.post(url, data=params or {}, timeout=timeout_seconds)
     else:

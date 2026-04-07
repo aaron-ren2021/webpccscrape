@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import time
 from typing import Any
 
@@ -16,6 +17,7 @@ from crawler.common import (
     parse_html,
     pick_first_attr,
     pick_first_text,
+    random_delay,
     request_html,
 )
 
@@ -31,6 +33,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
         params=settings.gov_params,
         timeout_seconds=settings.request_timeout_seconds,
         logger=logger,
+        settings=settings,
     )
     records = _parse_records(html, settings, logger)
 
@@ -56,9 +59,9 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
         if record.source != SOURCE_NAME or not record.url:
             continue
 
-        # Throttle requests to avoid triggering gov.pcc CAPTCHA
-        if idx > 0 and delay > 0:
-            time.sleep(delay)
+        # Throttle requests with random delay to avoid triggering gov.pcc CAPTCHA
+        if idx > 0:
+            random_delay(settings, logger)
 
         try:
             html = request_html(
@@ -67,6 +70,7 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
                 method="GET",
                 timeout_seconds=settings.request_timeout_seconds,
                 logger=logger,
+                settings=settings,
             )
 
             if _is_captcha_page(html):
@@ -77,7 +81,7 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
                 )
                 # Reset session and wait longer before retrying
                 session = build_session(settings)
-                time.sleep(delay * 3 + 2)
+                time.sleep(delay * 3 + random.uniform(1, 3))
 
                 html = request_html(
                     session=session,
@@ -85,6 +89,7 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
                     method="GET",
                     timeout_seconds=settings.request_timeout_seconds,
                     logger=logger,
+                    settings=settings,
                 )
                 if _is_captcha_page(html):
                     logger.warning(
