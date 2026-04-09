@@ -42,16 +42,6 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     if not high_amount_summary:
         high_amount_summary = "無"
 
-    # AI classification summary
-    ai_records = [r for r in records if r.ai_priority]
-    ai_high = [r for r in ai_records if r.ai_priority == "high"]
-    ai_summary_html = ""
-    if ai_records:
-        ai_summary_html = f"""
-      <div><strong>🤖 AI 分析：</strong>已評估 {len(ai_records)} 筆，高優先 {len(ai_high)} 筆</div>
-      <div><strong>AI 模型：</strong>{escape(ai_records[0].ai_model) if ai_records else '未使用'}</div>
-        """
-
     cards = "\n".join(_render_card(idx + 1, record) for idx, record in enumerate(records))
 
     return f"""
@@ -245,7 +235,6 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         <div><strong>🏫 單位類型：</strong>{unit_summary}</div>
         <div><strong>🏷️ 主題標籤：</strong>{tag_summary}</div>
         <div><strong>💰 高金額案件：</strong>{escape(high_amount_summary)}</div>
-        {ai_summary_html}
       </div>
 
       <div class="cards-container">
@@ -264,7 +253,6 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
 
 def _render_card(index: int, record: BidRecord) -> str:
     """Render a single bid as a card instead of table row."""
-    bid_date = record.bid_date.isoformat() if record.bid_date else "未提供"
     title = escape(record.title)
     org = escape(record.organization)
     
@@ -295,23 +283,6 @@ def _render_card(index: int, record: BidRecord) -> str:
     if record.backup_source:
         source_text = f"{record.source} (backup: {record.backup_source})"
     
-    # Priority badge
-    priority_html = ""
-    if record.ai_priority:
-        priority_class_map = {
-            "high": "priority-high",
-            "medium": "priority-medium",
-            "low": "priority-low",
-        }
-        priority_label_map = {
-            "high": "🔴 高優先",
-            "medium": "🟡 中優先",
-            "low": "⚪ 低優先",
-        }
-        priority_class = priority_class_map.get(record.ai_priority, "priority-low")
-        priority_label = priority_label_map.get(record.ai_priority, "—")
-        priority_html = f'<span class="priority-badge {priority_class}">{priority_label}</span>'
-    
     # Tags - highlight "軟體"
     tags_html = ""
     if record.tags:
@@ -330,22 +301,6 @@ def _render_card(index: int, record: BidRecord) -> str:
     else:
         link_html = "<span style='color:#9ca3af;'>無連結</span>"
     
-    # AI Summary (if available)
-    ai_info_html = ""
-    if record.ai_summary or record.ai_reason:
-        ai_summary_text = escape(record.ai_summary or "無摘要")
-        ai_reason_text = escape(record.ai_reason or "無分析理由")
-        ai_info_html = f"""
-        <div class="card-row">
-          <div class="card-label">🤖 AI 摘要</div>
-          <div class="card-value">{ai_summary_text}</div>
-        </div>
-        <div class="card-row">
-          <div class="card-label">📊 分析理由</div>
-          <div class="card-value" style="font-size:13px;color:#6b7280;">{ai_reason_text}</div>
-        </div>
-        """
-    
     return f"""
 <div class="bid-card">
   <div class="card-header">
@@ -360,10 +315,6 @@ def _render_card(index: int, record: BidRecord) -> str:
     <div class="card-row">
       <div class="card-label">💰 預算金額</div>
       <div class="card-value">{budget}</div>
-    </div>
-    <div class="card-row">
-      <div class="card-label">📅 公告日期</div>
-      <div class="card-value">{escape(bid_date)}</div>
     </div>
     <div class="card-row">
       <div class="card-label">⏰ 截止投標</div>
@@ -381,7 +332,6 @@ def _render_card(index: int, record: BidRecord) -> str:
       <div class="card-label">🏷️ 標籤</div>
       <div class="card-value">{tags_html}</div>
     </div>
-    {ai_info_html}
     <div class="card-row" style="margin-top:8px;">
       <div class="card-label">🔗 連結</div>
       <div class="card-value">{link_html}</div>
@@ -390,7 +340,6 @@ def _render_card(index: int, record: BidRecord) -> str:
       <div class="card-label">📡 來源</div>
       <div class="card-value">{escape(source_text)}</div>
     </div>
-    {('<div style="margin-top:8px;">' + priority_html + '</div>') if priority_html else ''}
   </div>
 </div>
 """.strip()

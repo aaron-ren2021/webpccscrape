@@ -93,10 +93,20 @@ def request_html(
     return response.text
 
 
-def optional_playwright_fetch_html(url: str, settings: Settings, wait_selector: str = "body") -> str:
+def optional_playwright_fetch_html(
+    url: str,
+    settings: Settings,
+    wait_selector: str = "body",
+    logger: Any = None,
+) -> str:
+    """Fetch HTML via Playwright. Uses stealth runner when stealth is enabled."""
     if not settings.enable_playwright_fallback:
         raise RuntimeError("Playwright fallback is disabled")
 
+    if settings.stealth_enabled:
+        return _stealth_playwright_fetch(url, settings, wait_selector, logger)
+
+    # Legacy non-stealth path
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover
@@ -110,6 +120,50 @@ def optional_playwright_fetch_html(url: str, settings: Settings, wait_selector: 
         html = page.content()
         browser.close()
         return html
+
+
+def _stealth_playwright_fetch(
+    url: str,
+    settings: Settings,
+    wait_selector: str,
+    logger: Any = None,
+) -> str:
+    """Delegate to the stealth runner with full anti-detection stack."""
+    from crawler.behavior.throttle import ThrottleConfig
+    from crawler.network.proxy_manager import ProxyConfig, ProxyEntry
+    from crawler.stealth_runner import StealthCrawlerConfig, stealth_fetch_html
+
+    throttle_cfg = ThrottleConfig(
+        delay_min=settings.stealth_throttle_delay_min,
+        delay_max=settings.stealth_throttle_delay_max,
+        cooldown_after_n=settings.stealth_throttle_cooldown_after,
+        cooldown_min=settings.stealth_throttle_cooldown_min,
+        cooldown_max=settings.stealth_throttle_cooldown_max,
+        backoff_base=settings.stealth_throttle_backoff_base,
+    )
+
+    proxy_entries = [ProxyEntry(server=s) for s in settings.proxy_list if s]
+    proxy_cfg = ProxyConfig(
+        enabled=settings.proxy_enabled and bool(proxy_entries),
+        proxies=proxy_entries,
+        strategy=settings.proxy_strategy,
+    )
+
+    cfg = StealthCrawlerConfig(
+        headless=settings.stealth_headless,
+        timeout_ms=settings.playwright_timeout_ms,
+        wait_selector=wait_selector,
+        enable_human_behavior=settings.stealth_human_behavior,
+        enable_session_persistence=settings.stealth_session_persistence,
+        session_ttl_hours=settings.stealth_session_ttl_hours,
+        session_dir=settings.stealth_session_dir,
+        artifact_dir=settings.stealth_artifact_dir,
+        throttle=throttle_cfg,
+        proxy=proxy_cfg,
+        max_retries=settings.stealth_max_retries,
+    )
+
+    return stealth_fetch_html(url, config=cfg, log=logger)
 
 
 def pick_first_text(node: Tag, selectors: list[str]) -> str:

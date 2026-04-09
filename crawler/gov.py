@@ -40,7 +40,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     if not records and settings.enable_playwright_fallback:
         logger.warning("gov_requests_empty_try_playwright")
         try:
-            html = optional_playwright_fetch_html(settings.gov_url, settings)
+            html = optional_playwright_fetch_html(settings.gov_url, settings, logger=logger)
             records = _parse_records(html, settings, logger)
         except Exception as exc:
             logger.exception("gov_playwright_failed", extra={"error": str(exc)})

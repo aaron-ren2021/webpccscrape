@@ -60,6 +60,27 @@ class Settings:
     enable_playwright_fallback: bool = False
     playwright_timeout_ms: int = 20000
 
+    # --- Stealth / anti-detection ---
+    stealth_enabled: bool = True
+    stealth_human_behavior: bool = True
+    stealth_session_persistence: bool = True
+    stealth_session_ttl_hours: float = 24.0
+    stealth_session_dir: str = ""
+    stealth_artifact_dir: str = ""
+    stealth_max_retries: int = 2
+    stealth_headless: bool = True
+    stealth_throttle_delay_min: float = 2.0
+    stealth_throttle_delay_max: float = 6.0
+    stealth_throttle_cooldown_after: int = 5
+    stealth_throttle_cooldown_min: float = 8.0
+    stealth_throttle_cooldown_max: float = 15.0
+    stealth_throttle_backoff_base: float = 5.0
+
+    # --- Proxy ---
+    proxy_enabled: bool = False
+    proxy_list: list[str] = field(default_factory=list)
+    proxy_strategy: str = "round_robin"
+
     recent_days: int = 1
     high_amount_threshold: float = 5_000_000.0
 
@@ -201,6 +222,25 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             ai_model=os.getenv("AI_MODEL", ""),
+            # --- Stealth / anti-detection ---
+            stealth_enabled=_parse_bool(os.getenv("STEALTH_ENABLED"), True),
+            stealth_human_behavior=_parse_bool(os.getenv("STEALTH_HUMAN_BEHAVIOR"), True),
+            stealth_session_persistence=_parse_bool(os.getenv("STEALTH_SESSION_PERSISTENCE"), True),
+            stealth_session_ttl_hours=_parse_float(os.getenv("STEALTH_SESSION_TTL_HOURS"), 24.0),
+            stealth_session_dir=os.getenv("STEALTH_SESSION_DIR", ""),
+            stealth_artifact_dir=os.getenv("STEALTH_ARTIFACT_DIR", ""),
+            stealth_max_retries=_parse_int(os.getenv("STEALTH_MAX_RETRIES"), 2),
+            stealth_headless=_parse_bool(os.getenv("STEALTH_HEADLESS"), True),
+            stealth_throttle_delay_min=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MIN"), 2.0),
+            stealth_throttle_delay_max=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MAX"), 6.0),
+            stealth_throttle_cooldown_after=_parse_int(os.getenv("STEALTH_THROTTLE_COOLDOWN_AFTER"), 5),
+            stealth_throttle_cooldown_min=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MIN"), 8.0),
+            stealth_throttle_cooldown_max=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MAX"), 15.0),
+            stealth_throttle_backoff_base=_parse_float(os.getenv("STEALTH_THROTTLE_BACKOFF_BASE"), 5.0),
+            # --- Proxy ---
+            proxy_enabled=_parse_bool(os.getenv("PROXY_ENABLED"), False),
+            proxy_list=_parse_csv(os.getenv("PROXY_LIST")),
+            proxy_strategy=os.getenv("PROXY_STRATEGY", "round_robin"),
             # --- GitHub Issue tracking ---
             github_token=os.getenv("GITHUB_TOKEN", ""),
             github_repo=os.getenv("GITHUB_REPO", ""),

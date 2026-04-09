@@ -27,6 +27,22 @@
     "ENABLE_PLAYWRIGHT_FALLBACK": "false",
 
     "TAIWANBUYING_URL": "https://www.taiwanbuying.com.tw/",
-    "GOV_URL": "https://web.pcc.gov.tw/pis/"
+    "GOV_URL": "https://web.pcc.gov.tw/pis/",
+
+    "_comment_stealth": "Anti-detection stealth settings (all optional, shown with defaults)",
+    "STEALTH_ENABLED": "true",
+    "STEALTH_HUMAN_BEHAVIOR": "true",
+    "STEALTH_SESSION_PERSISTENCE": "true",
+    "STEALTH_SESSION_TTL_HOURS": "24",
+    "STEALTH_MAX_RETRIES": "2",
+    "STEALTH_HEADLESS": "true",
+    "STEALTH_THROTTLE_DELAY_MIN": "2.0",
+    "STEALTH_THROTTLE_DELAY_MAX": "6.0",
+    "STEALTH_THROTTLE_COOLDOWN_AFTER": "5",
+
+    "_comment_proxy": "Proxy settings (optional)",
+    "PROXY_ENABLED": "false",
+    "PROXY_LIST": "",
+    "PROXY_STRATEGY": "round_robin"
   }
 }

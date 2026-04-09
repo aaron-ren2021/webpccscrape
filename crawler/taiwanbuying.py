@@ -38,7 +38,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     if not records and settings.enable_playwright_fallback:
         logger.warning("taiwanbuying_requests_empty_try_playwright")
         try:
-            html = optional_playwright_fetch_html(settings.taiwanbuying_url, settings)
+            html = optional_playwright_fetch_html(settings.taiwanbuying_url, settings, logger=logger)
             records = _parse_records(html, settings)
         except Exception as exc:
             logger.exception("taiwanbuying_playwright_failed", extra={"error": str(exc)})

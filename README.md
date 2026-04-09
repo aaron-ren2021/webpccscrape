@@ -201,24 +201,41 @@ func azure functionapp publish <functionAppName>
 - selector 透過環境變數可熱調整。
 - 程式內含 TODO 註解提醒：若來源 DOM 大改，優先調整 selector 與查詢參數。
 
-## 12. 部署前資源清單與設定值清單
-### 12.1 Azure 資源
-- Azure Function App (Python 3.11, Functions v4)
-- Azure Storage Account
-- （選用）Azure Communication Services Email + 已驗證寄件網域
-- （可選）Application Insights
+## 12. 反偵測/Stealth 機制說明
 
-### 12.2 必填設定值
-- `AZURE_STORAGE_CONNECTION_STRING`
-- `EMAIL_TO`
-- `TAIWANBUYING_URL`
-- `GOV_URL`
-- `USER_AGENT`
+本專案內建 Playwright 反偵測強化層，顯著提升動態網頁抓取成功率，降低被封鎖/驗證碼機率。
 
-### 12.3 擇一寄信通道
-- ACS（建議）
-  - `ACS_CONNECTION_STRING`
-  - `ACS_EMAIL_SENDER`
-- SMTP（備援）
-  - `SMTP_HOST` `SMTP_PORT` `SMTP_FROM`
-  - 視需求加 `SMTP_USERNAME` `SMTP_PASSWORD`
+### 12.1 功能亮點
+- **瀏覽器指紋隱匿**：自動遮蔽 `navigator.webdriver`、plugins、languages、WebGL 等自動化特徵，並隨機選用真實桌面 Chrome 指紋組合。
+- **人類行為模擬**：自動隨機捲動、滑鼠移動、hover/click、停留時間，避免機械式操作。
+- **Session 持久化**：自動儲存/載入 cookies 與 localStorage，讓每次執行都像「回訪用戶」而非新機器人。
+- **自適應請求節奏**：完全取代固定 sleep，改用 jitter、cooldown window、指數退避，降低異常流量偵測。
+- **偵測事件記錄**：自動分類成功/封鎖/驗證碼/挑戰頁，失敗時自動截圖與 HTML 快照，便於除錯。
+- **Proxy 輪轉**：支援多組 proxy，支援 round_robin / random / sticky 策略，失敗自動切換。
+
+### 12.2 啟用方式
+- 預設已啟用（`STEALTH_ENABLED=true`），如需關閉可設 `STEALTH_ENABLED=false`。
+- Proxy 功能需設定 `PROXY_ENABLED=true` 並填入 `PROXY_LIST`。
+- 所有參數皆可於 `.env` 或 Azure App Settings 熱調整。
+
+### 12.3 主要檔案結構
+```
+crawler/
+├─ stealth/         # 指紋隱匿/瀏覽器初始化
+├─ behavior/        # 人類行為模擬/節流
+├─ session/         # Session 持久化
+├─ network/         # Proxy 輪轉
+├─ detection/       # 偵測事件記錄
+└─ stealth_runner.py# 統一入口，整合所有反偵測層
+```
+
+### 12.4 相關環境變數
+- `STEALTH_ENABLED`：是否啟用反偵測（預設 true）
+- `STEALTH_HUMAN_BEHAVIOR`：啟用人類行為模擬
+- `STEALTH_SESSION_PERSISTENCE`：啟用 session 持久化
+- `STEALTH_MAX_RETRIES`：失敗重試次數
+- `STEALTH_THROTTLE_DELAY_MIN/MAX`：每次請求最小/最大間隔
+- `STEALTH_THROTTLE_COOLDOWN_AFTER`：每 N 次請求後 cooldown
+- `PROXY_ENABLED`、`PROXY_LIST`、`PROXY_STRATEGY`：Proxy 輪轉設定
+
+詳細請見 `local.settings.json.example`。
