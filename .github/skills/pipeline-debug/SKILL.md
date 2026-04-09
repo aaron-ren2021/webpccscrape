@@ -35,7 +35,7 @@ grep "source_failed" logs/cron.log | tail -5
 
 ### 2. 過濾階段
 - 檔案：[core/filters.py](../../core/filters.py)
-- 確認 `EDU_ORG_KEYWORDS` 和 `THEME_KEYWORDS` 是否涵蓋目標
+- 確認 `EDU_ORG_INCLUDE_KEYWORDS` 和 `THEME_KEYWORDS` 是否涵蓋目標
 
 ### 3. AI 分類階段
 - 檔案：[core/ai_classifier.py](../../core/ai_classifier.py)
