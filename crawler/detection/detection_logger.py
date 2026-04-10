@@ -23,6 +23,9 @@ class CrawlOutcome:
     REDIRECT_CHALLENGE = "redirect_challenge"  # Redirected to a challenge page
     EMPTY_CONTENT = "empty_content"  # Page loaded but no expected content found
     UNKNOWN_FAILURE = "unknown_failure"
+    ACCESS_DENIED = "access_denied"  # Explicit access denied message
+    CLOUDFLARE_CHALLENGE = "cloudflare_challenge"  # Cloudflare bot challenge
+    RATE_LIMITED = "rate_limited"  # Too many requests / rate limit hit
 
 
 # Common indicators for challenge / block pages
@@ -33,24 +36,41 @@ _CAPTCHA_MARKERS = [
     "recaptcha",
     "hCaptcha",
     "cf-turnstile",
+    "請完成驗證",
 ]
 
-_SOFT_BLOCK_MARKERS = [
-    "access denied",
-    "存取被拒",
-    "請稍後再試",
-    "Too Many Requests",
-    "rate limit",
-    "unusual traffic",
-]
-
-_JS_CHALLENGE_MARKERS = [
+_CLOUDFLARE_MARKERS = [
     "cf-browser-verification",
     "challenge-platform",
     "Just a moment",
     "Checking your browser",
     "_cf_chl_opt",
     "managed_checking_msg",
+    "cf-wrapper",
+    "__cf_chl_jschl_tk__",
+]
+
+_ACCESS_DENIED_MARKERS = [
+    "access denied",
+    "存取被拒",
+    "拒絕存取",
+    "403 forbidden",
+    "您無權限存取",
+]
+
+_RATE_LIMIT_MARKERS = [
+    "too many requests",
+    "請稍後再試",
+    "rate limit",
+    "請求過於頻繁",
+    "429",
+]
+
+_SOFT_BLOCK_MARKERS = [
+    "unusual traffic",
+    "異常流量",
+    "suspicious activity",
+    "請重新整理",
 ]
 
 
@@ -61,31 +81,58 @@ def classify_outcome(
     timed_out: bool = False,
     url: str = "",
 ) -> str:
-    """Classify a crawl attempt into a standard outcome category."""
+    """Classify a crawl attempt into a standard outcome category.
+    
+    Classification priority (high to low):
+    1. Timeout
+    2. HTTP status codes (403, 429, 5xx)
+    3. CAPTCHA markers
+    4. Cloudflare challenge markers
+    5. Access denied markers
+    6. Rate limit markers
+    7. Soft block markers
+    8. Empty content
+    9. Success
+    """
     if timed_out:
         return CrawlOutcome.TIMEOUT
 
+    # HTTP status-based classification
     if status_code == 403:
         return CrawlOutcome.HARD_BLOCK
     if status_code == 429:
-        return CrawlOutcome.SOFT_BLOCK
+        return CrawlOutcome.RATE_LIMITED
     if status_code >= 500:
         return CrawlOutcome.UNKNOWN_FAILURE
 
     html_lower = html.lower()
 
+    # Check for CAPTCHA (highest priority for content-based detection)
     for marker in _CAPTCHA_MARKERS:
         if marker.lower() in html_lower:
             return CrawlOutcome.CAPTCHA
 
-    for marker in _JS_CHALLENGE_MARKERS:
+    # Check for Cloudflare challenge
+    for marker in _CLOUDFLARE_MARKERS:
         if marker.lower() in html_lower:
-            return CrawlOutcome.REDIRECT_CHALLENGE
+            return CrawlOutcome.CLOUDFLARE_CHALLENGE
 
+    # Check for explicit access denied
+    for marker in _ACCESS_DENIED_MARKERS:
+        if marker.lower() in html_lower:
+            return CrawlOutcome.ACCESS_DENIED
+
+    # Check for rate limiting
+    for marker in _RATE_LIMIT_MARKERS:
+        if marker.lower() in html_lower:
+            return CrawlOutcome.RATE_LIMITED
+
+    # Check for soft blocks
     for marker in _SOFT_BLOCK_MARKERS:
         if marker.lower() in html_lower:
             return CrawlOutcome.SOFT_BLOCK
 
+    # Check if expected content is missing
     if not expected_selector_found:
         return CrawlOutcome.EMPTY_CONTENT
 
@@ -182,3 +229,14 @@ class DetectionLogger:
             return 0.0
         successes = sum(1 for ev in self._events if ev.get("outcome") == CrawlOutcome.SUCCESS)
         return successes / total
+
+    def export_events_json(self, output_path: str) -> None:
+        """Export all logged events to a JSON file for analysis."""
+        import json
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self._events, f, indent=2, ensure_ascii=False)
+        
+        logger.info("events_exported", extra={"path": str(output_path), "count": len(self._events)})

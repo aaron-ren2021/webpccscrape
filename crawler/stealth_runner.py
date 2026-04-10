@@ -7,6 +7,8 @@ reusable entry-point for Playwright-based scraping.
 from __future__ import annotations
 
 import logging
+import random
+from enum import Enum
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -23,6 +25,69 @@ from crawler.stealth.browser_stealth import create_stealth_context
 from crawler.stealth.fingerprint_profiles import FingerprintProfile, pick_profile
 
 logger = logging.getLogger(__name__)
+
+
+class CrawlStrategy(str, Enum):
+    """Pre-defined crawl strategy profiles for adaptive anti-detection."""
+
+    STEALTH = "stealth"        # Maximum stealth: long delays, full behavior simulation
+    BALANCED = "balanced"      # Balanced approach: moderate delays and behavior
+    AGGRESSIVE = "aggressive"  # Fast crawling: shorter delays, basic behavior
+
+
+def _create_strategy_config(strategy: CrawlStrategy) -> dict[str, Any]:
+    """Create a configuration dict based on the selected strategy."""
+    if strategy == CrawlStrategy.STEALTH:
+        return {
+            "throttle": ThrottleConfig(
+                delay_min=3.0,
+                delay_max=9.0,
+                cooldown_after_n=4,
+                cooldown_min=15.0,
+                cooldown_max=35.0,
+                jitter_factor=0.5,
+            ),
+            "max_retries": 2,
+            "enable_human_behavior": True,
+            "max_requests_per_identity": 3,  # More conservative in stealth mode
+        }
+    elif strategy == CrawlStrategy.AGGRESSIVE:
+        return {
+            "throttle": ThrottleConfig(
+                delay_min=0.8,
+                delay_max=4.0,
+                cooldown_after_n=8,
+                cooldown_min=5.0,
+                cooldown_max=12.0,
+                jitter_factor=0.3,
+            ),
+            "max_retries": 3,
+            "enable_human_behavior": True,
+            "max_requests_per_identity": 6,  # More aggressive = more requests per identity
+        }
+    else:  # BALANCED (default)
+        return {
+            "throttle": ThrottleConfig(
+                delay_min=1.5,
+                delay_max=7.5,
+                cooldown_after_n=5,
+                cooldown_min=10.0,
+                cooldown_max=25.0,
+                jitter_factor=0.4,
+            ),
+            "max_retries": 2,
+            "enable_human_behavior": True,
+            "max_requests_per_identity": 4,  # Balanced approach
+        }
+
+
+def pick_strategy(seed: Optional[int] = None) -> CrawlStrategy:
+    """Randomly select a crawl strategy. Optionally seed for reproducibility."""
+    strategies = list(CrawlStrategy)
+    if seed is not None:
+        rng = random.Random(seed)
+        return rng.choice(strategies)
+    return random.choice(strategies)
 
 
 class StealthCrawlerConfig:
@@ -42,6 +107,7 @@ class StealthCrawlerConfig:
         throttle: ThrottleConfig | None = None,
         proxy: ProxyConfig | None = None,
         max_retries: int = 2,
+        max_requests_per_identity: int = 4,  # New: identity rotation threshold
     ) -> None:
         self.headless = headless
         self.timeout_ms = timeout_ms
@@ -54,6 +120,7 @@ class StealthCrawlerConfig:
         self.throttle = throttle or ThrottleConfig()
         self.proxy = proxy or ProxyConfig()
         self.max_retries = max_retries
+        self.max_requests_per_identity = max_requests_per_identity
 
 
 def _domain_from_url(url: str) -> str:
@@ -65,6 +132,7 @@ def stealth_fetch_html(
     url: str,
     config: StealthCrawlerConfig | None = None,
     profile: FingerprintProfile | None = None,
+    strategy: CrawlStrategy | None = None,
     log: Any | None = None,
 ) -> str:
     """Fetch HTML from *url* using a stealth Playwright browser.
@@ -77,6 +145,10 @@ def stealth_fetch_html(
     5. Throttle between requests
     6. Detection logging with screenshot on failure
 
+    If *strategy* is provided but *config* is None, a config will be
+    auto-generated from the strategy. If both are None, a random strategy
+    is selected.
+
     Returns the page HTML on success; raises RuntimeError on persistent failure.
     """
     try:
@@ -84,7 +156,14 @@ def stealth_fetch_html(
     except ImportError as exc:
         raise RuntimeError("Playwright is not installed. Run: playwright install chromium") from exc
 
-    config = config or StealthCrawlerConfig()
+    # Strategy-based config generation
+    if config is None:
+        if strategy is None:
+            strategy = pick_strategy()
+        strategy_params = _create_strategy_config(strategy)
+        config = StealthCrawlerConfig(**strategy_params)
+        logger.info("crawl_strategy_selected", extra={"url": url, "strategy": strategy})
+    
     log = log or logger
     domain = _domain_from_url(url)
 
@@ -204,6 +283,39 @@ def stealth_fetch_html(
                     "stealth_fetch_blocked",
                     extra={"url": url, "attempt": attempt, "outcome": outcome},
                 )
+
+                # --- Intelligent failure response ---
+                # Certain failures are terminal - don't waste retries
+                if outcome in (
+                    CrawlOutcome.CAPTCHA,
+                    CrawlOutcome.HARD_BLOCK,
+                    CrawlOutcome.ACCESS_DENIED,
+                ):
+                    log.error(
+                        "stealth_fetch_terminal_failure",
+                        extra={"url": url, "outcome": outcome, "message": "Aborting retries for terminal failure"},
+                    )
+                    browser.close()
+                    raise RuntimeError(
+                        f"Terminal failure detected ({outcome}) for {url}. Not retrying."
+                    )
+
+                # For recoverable failures, force fingerprint rotation on next attempt
+                if outcome in (
+                    CrawlOutcome.RATE_LIMITED,
+                    CrawlOutcome.CLOUDFLARE_CHALLENGE,
+                    CrawlOutcome.SOFT_BLOCK,
+                ):
+                    # Pick a new profile for the next attempt
+                    profile = pick_profile()
+                    log.info(
+                        "stealth_fetch_rotating_fingerprint",
+                        extra={
+                            "url": url,
+                            "outcome": outcome,
+                            "new_platform": profile.platform,
+                        },
+                    )
 
                 # Report proxy failure so rotation can switch
                 if proxy_dict:
