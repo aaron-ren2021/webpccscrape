@@ -128,21 +128,23 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
       }}
       .card-body {{
         display: grid;
-        gap: 8px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
       }}
       .card-row {{
         display: flex;
-        gap: 8px;
+        flex-direction: column;
+        gap: 4px;
         font-size: 14px;
       }}
       .card-label {{
         color: #6b7280;
-        min-width: 80px;
-        flex-shrink: 0;
+        font-size: 13px;
+        font-weight: 500;
       }}
       .card-value {{
         color: #1f2937;
-        flex: 1;
+        font-weight: 500;
       }}
       .amount-bold {{
         font-weight: bold;
