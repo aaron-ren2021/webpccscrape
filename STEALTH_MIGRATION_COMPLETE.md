@@ -18,7 +18,7 @@
 - ✅ 保留解析邏輯 `_parse_records` 不變
 
 ### 4. **.env**
-- ✅ `ENABLE_PLAYWRIGHT_FALLBACK=true`
+- ✅ `ENABLE_PLAYWRIGHT=true`
 - ✅ `STEALTH_ENABLED=true`
 - ✅ `STEALTH_HUMAN_BEHAVIOR=true`
 - ✅ `STEALTH_SESSION_PERSISTENCE=true`

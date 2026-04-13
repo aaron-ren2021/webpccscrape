@@ -28,7 +28,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.
     """
     # 🔥 優先使用 Playwright+Stealth
-    if settings.stealth_enabled and settings.enable_playwright_fallback:
+    if settings.stealth_enabled and settings.enable_playwright:
         logger.info("taiwanbuying_fetch_using_stealth")
         try:
             html = optional_playwright_fetch_html(
@@ -57,7 +57,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     )
     records = _parse_records(html, settings)
 
-    if not records and settings.enable_playwright_fallback:
+    if not records and settings.enable_playwright:
         logger.warning("taiwanbuying_requests_empty_try_playwright")
         try:
             html = optional_playwright_fetch_html(settings.taiwanbuying_url, settings, logger=logger)

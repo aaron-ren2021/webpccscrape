@@ -100,8 +100,8 @@ def optional_playwright_fetch_html(
     logger: Any = None,
 ) -> str:
     """Fetch HTML via Playwright. Uses stealth runner when stealth is enabled."""
-    if not settings.enable_playwright_fallback:
-        raise RuntimeError("Playwright fallback is disabled")
+    if not settings.enable_playwright:
+        raise RuntimeError("Playwright is disabled")
 
     if settings.stealth_enabled:
         return _stealth_playwright_fetch(url, settings, wait_selector, logger)

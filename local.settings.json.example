@@ -24,7 +24,7 @@
     "SMTP_USE_TLS": "true",
 
     "USER_AGENT": "Mozilla/5.0 (compatible; bid-monitor/1.0; +https://example.com)",
-    "ENABLE_PLAYWRIGHT_FALLBACK": "false",
+    "ENABLE_PLAYWRIGHT": "false",
 
     "TAIWANBUYING_URL": "https://www.taiwanbuying.com.tw/",
     "GOV_URL": "https://web.pcc.gov.tw/pis/",

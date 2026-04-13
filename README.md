@@ -190,13 +190,13 @@ func azure functionapp publish <functionAppName>
   - ACS：`ACS_CONNECTION_STRING`、`ACS_EMAIL_SENDER`
   - SMTP：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`
   - 收件人：`EMAIL_TO`
-- fallback：`ENABLE_PLAYWRIGHT_FALLBACK`
+- Playwright：`ENABLE_PLAYWRIGHT`
 
 ## 9. 常見故障排除
 1. 抓不到資料
 - 檢查 `*_ROW_SELECTORS` / `*_TITLE_SELECTORS` 等 selector。
 - 優先改環境變數，不要先改程式。
-- 動態頁面時啟用 `ENABLE_PLAYWRIGHT_FALLBACK=true`。
+- 動態頁面時啟用 `ENABLE_PLAYWRIGHT=true`（預設已啟用）。
 
 2. 只抓到單一來源
 - 另一來源失敗不會中止整體流程，請看 log 的 `source_failed`。

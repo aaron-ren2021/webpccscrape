@@ -56,9 +56,9 @@ curl -s -A "Mozilla/5.0" "TARGET_URL" | head -200
    TAIWANBUYING_ROW_SELECTORS=新selector1,新selector2
    ```
 
-2. **備選方案**：啟用 Playwright fallback
+2. **備選方案**：啟用 Playwright（預設已啟用）
    ```bash
-   ENABLE_PLAYWRIGHT_FALLBACK=true
+   ENABLE_PLAYWRIGHT=true
    ```
 
 3. **最後方案**：修改爬蟲程式碼

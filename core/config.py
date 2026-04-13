@@ -57,7 +57,7 @@ class Settings:
     request_delay_min: float = 2.0
     request_delay_max: float = 5.0
 
-    enable_playwright_fallback: bool = False
+    enable_playwright: bool = True  # 🔥 預設啟用 Playwright+Stealth
     playwright_timeout_ms: int = 20000
 
     # --- Stealth / anti-detection ---
@@ -162,7 +162,7 @@ class Settings:
             request_backoff_factor=_parse_float(os.getenv("REQUEST_BACKOFF_FACTOR"), 0.8),
             request_delay_min=_parse_float(os.getenv("REQUEST_DELAY_MIN"), 2.0),
             request_delay_max=_parse_float(os.getenv("REQUEST_DELAY_MAX"), 5.0),
-            enable_playwright_fallback=_parse_bool(os.getenv("ENABLE_PLAYWRIGHT_FALLBACK"), False),
+            enable_playwright=_parse_bool(os.getenv("ENABLE_PLAYWRIGHT"), True),
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),
             high_amount_threshold=_parse_float(os.getenv("HIGH_AMOUNT_THRESHOLD"), 5_000_000.0),

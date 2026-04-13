@@ -19,7 +19,7 @@ def main():
     
     # Check critical settings
     checks = {
-        "✅ Playwright Fallback 已啟用": settings.enable_playwright_fallback,
+        "✅ Playwright 已啟用": settings.enable_playwright,
         "✅ Stealth 已啟用": settings.stealth_enabled,
         "✅ 人類行為模擬已啟用": settings.stealth_human_behavior,
         "✅ Session 持久化已啟用": settings.stealth_session_persistence,

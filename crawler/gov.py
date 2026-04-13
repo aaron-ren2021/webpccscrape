@@ -30,7 +30,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.
     """
     # 🔥 Phase 2: 優先使用 Playwright+Stealth
-    if settings.stealth_enabled and settings.enable_playwright_fallback:
+    if settings.stealth_enabled and settings.enable_playwright:
         logger.info("gov_fetch_using_stealth")
         try:
             html = optional_playwright_fetch_html(
@@ -59,7 +59,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     )
     records = _parse_records(html, settings, logger)
 
-    if not records and settings.enable_playwright_fallback:
+    if not records and settings.enable_playwright:
         logger.warning("gov_requests_empty_try_playwright")
         try:
             html = optional_playwright_fetch_html(settings.gov_url, settings, logger=logger)
@@ -83,7 +83,7 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
         return
     
     # 🔥 Phase 1: 優先使用 Playwright+Stealth 批次抓取
-    if settings.stealth_enabled and settings.enable_playwright_fallback:
+    if settings.stealth_enabled and settings.enable_playwright:
         try:
             enrich_detail_stealth(gov_records, settings, logger)
             return
