@@ -15,8 +15,8 @@
 - 執行環境：Azure Functions (Python Timer Trigger)
 - 觸發時間：每天台灣時間 08:30（UTC `00:30`）
 - 抓取層：
-  - 優先 `requests + BeautifulSoup`
-  - 無法解析時可啟用 `Playwright` fallback
+  - 預設 `Playwright + Stealth`（真人行為模擬/指紋隱匿/identity 輪轉）
+  - 無法啟動瀏覽器時自動 fallback `requests + BeautifulSoup`
 - 邏輯層：
   - 關鍵字篩選（教育單位 + 主題）
   - 精準去重 + 近似去重
@@ -29,7 +29,6 @@
   - 優先 ACS Email
   - 未配置/失敗 fallback SMTP
 
-## 3. 專案結構
 ```text
 .
 ├─ function_app.py
@@ -38,10 +37,18 @@
 ├─ requirements.txt
 ├─ local.settings.json.example
 ├─ .env.example
+├─ STEALTH_MIGRATION_COMPLETE.md   # Stealth/Playwright 重大改版紀錄
+├─ verify_stealth.py               # Stealth/真人行為模擬驗證腳本
 ├─ crawler/
 │  ├─ common.py
 │  ├─ gov.py
-│  └─ taiwanbuying.py
+│  ├─ taiwanbuying.py
+│  ├─ stealth/         # 指紋隱匿/瀏覽器初始化
+│  ├─ behavior/        # 人類行為模擬/節流
+│  ├─ session/         # Session 持久化
+│  ├─ network/         # Proxy 輪轉
+│  ├─ detection/       # 偵測事件記錄
+│  └─ stealth_runner.py# 反偵測統一入口
 ├─ core/
 │  ├─ config.py
 │  ├─ dedup.py
@@ -58,9 +65,10 @@
 │  ├─ email_acs.py
 │  └─ email_smtp.py
 └─ tests/
-   ├─ test_dedup.py
-   ├─ test_filters.py
-   └─ test_normalize.py
+  ├─ test_dedup.py
+  ├─ test_filters.py
+  └─ test_normalize.py
+```
 ```
 
 ## 4. 安裝方式
@@ -74,12 +82,18 @@ pip install -r requirements.txt
 cp .env.example .env
 cp local.settings.json.example local.settings.json
 ```
-4. 如需 Playwright fallback：
+4. Playwright 及瀏覽器安裝（**必須**）：
 ```bash
+pip install playwright
 playwright install chromium
+```
+5. （可選）驗證 Stealth/真人行為模擬：
+```bash
+python verify_stealth.py
 ```
 
 ## 5. 本機執行方式
+
 ### 5.1 本機測試模式（不寄信、輸出 HTML）
 ```bash
 python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
@@ -90,7 +104,12 @@ python run_local.py --no-send --preview-html ./output/preview.html --no-persist-
 python run_local.py
 ```
 
-### 5.3 單元測試
+### 5.3 驗證 Stealth/真人行為模擬
+```bash
+python verify_stealth.py
+```
+
+### 5.4 單元測試
 ```bash
 pytest
 
@@ -203,39 +222,37 @@ func azure functionapp publish <functionAppName>
 
 ## 12. 反偵測/Stealth 機制說明
 
-本專案內建 Playwright 反偵測強化層，顯著提升動態網頁抓取成功率，降低被封鎖/驗證碼機率。
+本專案已預設全面啟用 Playwright + Stealth 反偵測強化層，顯著提升動態網頁抓取成功率，降低被封鎖/驗證碼機率。
 
 ### 12.1 功能亮點
 - **瀏覽器指紋隱匿**：自動遮蔽 `navigator.webdriver`、plugins、languages、WebGL 等自動化特徵，並隨機選用真實桌面 Chrome 指紋組合。
-- **人類行為模擬**：自動隨機捲動、滑鼠移動、hover/click、停留時間，避免機械式操作。
+- **人類行為模擬**：自動隨機捲動、滑鼠移動、hover/click、停留時間，避免機械式操作，並可於 `verify_stealth.py` 驗證。
+- **Identity/Proxy 輪轉**：自動切換多組身份與 Proxy，降低單一來源被封鎖風險。
 - **Session 持久化**：自動儲存/載入 cookies 與 localStorage，讓每次執行都像「回訪用戶」而非新機器人。
 - **自適應請求節奏**：完全取代固定 sleep，改用 jitter、cooldown window、指數退避，降低異常流量偵測。
 - **偵測事件記錄**：自動分類成功/封鎖/驗證碼/挑戰頁，失敗時自動截圖與 HTML 快照，便於除錯。
-- **Proxy 輪轉**：支援多組 proxy，支援 round_robin / random / sticky 策略，失敗自動切換。
 
 ### 12.2 啟用方式
-- 預設已啟用（`STEALTH_ENABLED=true`），如需關閉可設 `STEALTH_ENABLED=false`。
-- Proxy 功能需設定 `PROXY_ENABLED=true` 並填入 `PROXY_LIST`。
+- **已預設啟用**（`STEALTH_ENABLED=true`），如需關閉可設 `STEALTH_ENABLED=false`。
+- Proxy/identity 輪轉功能可於 `.env` 設定 `PROXY_ENABLED=true` 並填入 `PROXY_LIST`。
 - 所有參數皆可於 `.env` 或 Azure App Settings 熱調整。
 
 ### 12.3 主要檔案結構
-```
-crawler/
-├─ stealth/         # 指紋隱匿/瀏覽器初始化
-├─ behavior/        # 人類行為模擬/節流
-├─ session/         # Session 持久化
-├─ network/         # Proxy 輪轉
-├─ detection/       # 偵測事件記錄
-└─ stealth_runner.py# 統一入口，整合所有反偵測層
-```
+（見上方「專案結構」）
 
 ### 12.4 相關環境變數
 - `STEALTH_ENABLED`：是否啟用反偵測（預設 true）
-- `STEALTH_HUMAN_BEHAVIOR`：啟用人類行為模擬
+- `STEALTH_HUMAN_BEHAVIOR`：啟用人類行為模擬（預設 true）
 - `STEALTH_SESSION_PERSISTENCE`：啟用 session 持久化
 - `STEALTH_MAX_RETRIES`：失敗重試次數
 - `STEALTH_THROTTLE_DELAY_MIN/MAX`：每次請求最小/最大間隔
 - `STEALTH_THROTTLE_COOLDOWN_AFTER`：每 N 次請求後 cooldown
 - `PROXY_ENABLED`、`PROXY_LIST`、`PROXY_STRATEGY`：Proxy 輪轉設定
+## 13. 常見 Stealth 問題排解
+- 若遇驗證碼/封鎖，建議：
+  - 增加 Proxy/identity 組數，調整 `STEALTH_THROTTLE_DELAY_MAX` 增加間隔
+  - 檢查 log 內 `batch_fetch_error`、`blocked`、`captcha` 訊息
+  - 執行 `python verify_stealth.py` 驗證環境與參數
+  - 如仍失敗，請參考 `STEALTH_MIGRATION_COMPLETE.md` 或聯絡維護者
 
 詳細請見 `local.settings.json.example`。
