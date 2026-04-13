@@ -23,6 +23,28 @@ SOURCE_NAME = "taiwanbuying"
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
+    """Fetch bids from taiwanbuying main page.
+    
+    Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.
+    """
+    # 🔥 優先使用 Playwright+Stealth
+    if settings.stealth_enabled and settings.enable_playwright_fallback:
+        logger.info("taiwanbuying_fetch_using_stealth")
+        try:
+            html = optional_playwright_fetch_html(
+                settings.taiwanbuying_url, 
+                settings, 
+                wait_selector="body",
+                logger=logger
+            )
+            records = _parse_records(html, settings)
+            if records:
+                logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "stealth"})
+                return records
+        except Exception as exc:
+            logger.warning("taiwanbuying_stealth_failed_fallback_requests", extra={"error": str(exc)})
+    
+    # Fallback to requests+BeautifulSoup
     session = build_session(settings)
     html = request_html(
         session=session,
@@ -43,7 +65,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
         except Exception as exc:
             logger.exception("taiwanbuying_playwright_failed", extra={"error": str(exc)})
 
-    logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records)})
+    logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "requests"})
     return records
 
 

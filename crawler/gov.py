@@ -25,6 +25,28 @@ SOURCE_NAME = "gov_pcc"
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
+    """Fetch bids from gov.pcc main list page.
+    
+    Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.
+    """
+    # 🔥 Phase 2: 優先使用 Playwright+Stealth
+    if settings.stealth_enabled and settings.enable_playwright_fallback:
+        logger.info("gov_fetch_using_stealth")
+        try:
+            html = optional_playwright_fetch_html(
+                settings.gov_url, 
+                settings, 
+                wait_selector="table[id='row']",
+                logger=logger
+            )
+            records = _parse_records(html, settings, logger)
+            if records:
+                logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "stealth"})
+                return records
+        except Exception as exc:
+            logger.warning("gov_stealth_failed_fallback_requests", extra={"error": str(exc)})
+    
+    # Fallback to requests+BeautifulSoup
     session = build_session(settings)
     html = request_html(
         session=session,
@@ -45,18 +67,118 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
         except Exception as exc:
             logger.exception("gov_playwright_failed", extra={"error": str(exc)})
 
-    logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records)})
+    logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "requests"})
     return records
 
 
 def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> None:
-    """Fetch detail pages for gov_pcc records and extract budget_amount / bid_bond."""
+    """Fetch detail pages for gov_pcc records and extract budget_amount / bid_bond.
+    
+    🔥 Uses batch_stealth_fetch with identity rotation if stealth is enabled,
+    otherwise falls back to traditional requests approach.
+    """
+    # Filter records that need enrichment
+    gov_records = [r for r in records if r.source == SOURCE_NAME and r.url]
+    if not gov_records:
+        return
+    
+    # 🔥 Phase 1: 優先使用 Playwright+Stealth 批次抓取
+    if settings.stealth_enabled and settings.enable_playwright_fallback:
+        try:
+            enrich_detail_stealth(gov_records, settings, logger)
+            return
+        except Exception as exc:
+            logger.warning("gov_detail_stealth_failed_fallback_requests", extra={"error": str(exc)})
+    
+    # Fallback to traditional requests approach
+    enrich_detail_requests(gov_records, settings, logger)
+
+
+def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    """🔥 NEW: Enrich detail using batch_stealth_fetch with identity rotation.
+    
+    This is the PRIMARY method to avoid CAPTCHA. Uses identity rotation every N requests
+    to prevent cumulative detection (gov.pcc typically blocks after 5-6 requests).
+    """
+    from crawler.batch_crawler import batch_stealth_fetch
+    from crawler.behavior.throttle import ThrottleConfig
+    
+    # Collect URLs to fetch
+    urls = [r.url for r in records if r.url]
+    if not urls:
+        return
+    
+    logger.info(
+        "gov_detail_enriching_stealth",
+        extra={
+            "count": len(urls),
+            "max_per_identity": settings.gov_detail_max_per_identity,
+        }
+    )
+    
+    # Configure throttle for gov.pcc (conservative settings to avoid CAPTCHA)
+    throttle_config = ThrottleConfig(
+        delay_min=settings.stealth_throttle_delay_min,
+        delay_max=settings.stealth_throttle_delay_max,
+        cooldown_after_n=settings.stealth_throttle_cooldown_after,
+        cooldown_min=settings.stealth_throttle_cooldown_min,
+        cooldown_max=settings.stealth_throttle_cooldown_max,
+        backoff_base=settings.stealth_throttle_backoff_base,
+    )
+    
+    # 🔥 Batch fetch with identity rotation
+    result = batch_stealth_fetch(
+        urls,
+        max_requests_per_identity=settings.gov_detail_max_per_identity,
+        headless=settings.stealth_headless,
+        timeout_ms=settings.playwright_timeout_ms,
+        wait_selector="table.tb_01",  # Wait for detail table
+        enable_human_behavior=settings.stealth_human_behavior,
+        enable_session_persistence=settings.stealth_session_persistence,
+        session_dir=settings.stealth_session_dir,
+        artifact_dir=settings.stealth_artifact_dir,
+        throttle_config=throttle_config,
+        proxy_list=settings.proxy_list if settings.proxy_enabled else None,
+        log=logger,
+    )
+    
+    # Parse successful results
+    url_to_record = {r.url: r for r in records if r.url}
+    
+    for url, html in result.successful:
+        record = url_to_record.get(url)
+        if not record:
+            continue
+        
+        try:
+            soup = parse_html(html)
+            _extract_detail_fields(soup, record)
+        except Exception as exc:
+            logger.warning("gov_detail_parse_failed", extra={"url": url, "error": str(exc)})
+    
+    # Log failures
+    for url, reason in result.failed:
+        logger.warning("gov_detail_fetch_failed", extra={"url": url, "reason": reason})
+    
+    logger.info(
+        "gov_detail_enriched_stealth",
+        extra={
+            "total": len(urls),
+            "successful": result.success_count,
+            "failed": result.failure_count,
+            "success_rate": f"{result.success_rate * 100:.1f}%",
+        }
+    )
+
+
+def enrich_detail_requests(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    """Traditional requests-based detail enrichment (legacy fallback)."""
     session = build_session(settings)
     delay = settings.gov_detail_delay_seconds
     captcha_count = 0
 
     for idx, record in enumerate(records):
-        if record.source != SOURCE_NAME or not record.url:
+        if not record.url:
             continue
 
         # Throttle requests with random delay to avoid triggering gov.pcc CAPTCHA
