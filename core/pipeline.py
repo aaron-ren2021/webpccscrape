@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -10,10 +10,11 @@ from crawler.gov import fetch_bids as fetch_gov_bids
 from crawler.gov import enrich_detail as enrich_gov_detail
 from crawler.taiwanbuying import fetch_bids as fetch_taiwanbuying_bids
 from crawler.g0v import fetch_bids as fetch_g0v_bids
+from crawler.g0v import enrich_record as enrich_g0v_record
 from core.ai_classifier import AIClassification, build_ai_clients, classify_bids_batch
 from core.config import Settings
 from core.dedup import deduplicate_bids
-from core.filters import filter_bids
+from core.filters import screen_bids
 from core.formatter import render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
 from core.normalize import build_bid_uid
@@ -21,6 +22,9 @@ from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
 from storage.table_store import TableStateStore
+
+MAX_G0V_ENRICH_PER_RUN = 40
+MAX_GOV_FALLBACK_PER_RUN = 12
 
 
 class InMemoryStateStore:
@@ -43,15 +47,16 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     source_status: list[SourceRunStatus] = []
     all_records: list[BidRecord] = []
 
-    # Define sources to fetch
-    sources = [
-        ("taiwanbuying", fetch_taiwanbuying_bids),
-        ("gov_pcc", fetch_gov_bids),
-    ]
-    
-    # Add g0v if enabled
-    if settings.g0v_enabled:
-        sources.append(("g0v", fetch_g0v_bids))
+    # API-only mode: 專門使用 openfun API 來源，避免直接爬兩個網站列表頁。
+    if settings.api_only_mode:
+        sources = [("g0v", fetch_g0v_bids)]
+    else:
+        sources = [
+            ("taiwanbuying", fetch_taiwanbuying_bids),
+            ("gov_pcc", fetch_gov_bids),
+        ]
+        if settings.g0v_enabled:
+            sources.append(("g0v", fetch_g0v_bids))
 
     for source_name, fn in sources:
         try:
@@ -62,8 +67,19 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             logger.exception("source_failed", extra={"source": source_name, "error": str(exc)})
             source_status.append(SourceRunStatus(source=source_name, success=False, count=0, error=str(exc)))
 
-    # --- Phase 1: keyword-based filter + dedup ---
-    filtered = filter_bids(all_records)
+    # --- Phase 1: keyword screen + dedup ---
+    keyword_high, keyword_boundary, keyword_stats = screen_bids(all_records)
+    filtered = keyword_high + keyword_boundary
+    logger.info(
+        "keyword_screen_distribution",
+        extra={
+            "high_confidence": len(keyword_high),
+            "boundary": len(keyword_boundary),
+            "excluded_low_score": keyword_stats.get("excluded_low_score", 0),
+            "excluded_strong": keyword_stats.get("excluded_strong", 0),
+            "included_total": len(filtered),
+        },
+    )
     deduped = deduplicate_bids(filtered)
 
     for record in deduped:
@@ -75,14 +91,52 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             amount_raw=record.amount_raw,
         )
 
-    # --- Phase 1.5: Enrich detail fields (budget, bid bond) for filtered records ---
-    gov_records = [r for r in deduped if r.source == "gov_pcc"]
-    if gov_records:
+    keyword_high_confidence = [record for record in deduped if record.metadata.get("keyword_confidence") == "high_confidence"]
+    keyword_boundary_candidates = [record for record in deduped if record.metadata.get("keyword_confidence") == "boundary"]
+
+    # --- Phase 1.75: Embedding semantic recall (optional) ---
+    embedding_enabled = getattr(settings, 'enable_embedding_recall', False)
+    final_candidates = keyword_high_confidence
+    if embedding_enabled and keyword_boundary_candidates:
         try:
-            enrich_gov_detail(gov_records, settings, logger)
-            logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+            from core.embedding_recall import recall_bids_with_embedding
+            
+            original_count = len(keyword_boundary_candidates)
+            recalled_boundary = recall_bids_with_embedding(
+                keyword_boundary_candidates,
+                model_name=getattr(settings, 'embedding_model', 'paraphrase-multilingual-MiniLM-L12-v2'),
+                top_k=getattr(settings, 'embedding_top_k', 30),
+                similarity_threshold=getattr(settings, 'embedding_similarity_threshold', 0.62),
+                log=logger,
+            )
+            for record in recalled_boundary:
+                record.metadata["filter_source"] = "keyword_boundary_embedding"
+                record.metadata["keyword_confidence"] = "high_confidence"
+            final_candidates = keyword_high_confidence + recalled_boundary
+            logger.info(
+                "embedding_recall_applied",
+                extra={
+                    "original": original_count,
+                    "recalled": len(recalled_boundary),
+                    "filtered_out": original_count - len(recalled_boundary),
+                }
+            )
+        except ImportError:
+            logger.warning(
+                "embedding_recall_skipped_dependency_missing",
+                extra={"hint": "Install: pip install sentence-transformers scikit-learn"}
+            )
         except Exception as exc:
-            logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+            logger.warning("embedding_recall_failed", extra={"error": str(exc)})
+            # Graceful fallback: continue with original deduped list
+            final_candidates = keyword_high_confidence
+    elif keyword_boundary_candidates:
+        logger.info(
+            "embedding_boundary_skipped",
+            extra={"count": len(keyword_boundary_candidates), "reason": "embedding_disabled"},
+        )
+
+    deduped = final_candidates
 
     # --- Phase 2: AI-enhanced classification (optional) ---
     ai_enabled = getattr(settings, 'enable_ai_classification', False)
@@ -90,13 +144,29 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         try:
             openai_client, anthropic_client = build_ai_clients(settings)
             if openai_client or anthropic_client:
-                ai_model = getattr(settings, 'ai_model', '')
+                ai_model = getattr(settings, 'ai_model', '') or getattr(settings, 'ollama_model', 'qwen2.5:3b')
+                
+                # 🔥 決定是否使用驗證模式（Ollama 用驗證模式，OpenAI/Anthropic 用完整模式）
+                use_validation = getattr(settings, 'use_validation_mode', False)
+                is_ollama = bool(getattr(settings, 'ollama_base_url', ''))
+                validation_mode = use_validation and is_ollama
+                
+                logger.info(
+                    "ai_classification_starting",
+                    extra={
+                        "mode": "validation" if validation_mode else "full",
+                        "model": ai_model,
+                        "is_ollama": is_ollama,
+                    }
+                )
+                
                 classifications = classify_bids_batch(
                     deduped,
                     openai_client=openai_client,
                     anthropic_client=anthropic_client,
                     model=ai_model,
                     log=logger,
+                    validation_mode=validation_mode,
                 )
                 for record, cls in zip(deduped, classifications):
                     record.ai_edu_score = cls.edu_score
@@ -117,23 +187,12 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
 
     state_store = _resolve_state_store(settings, logger)
     notified_keys = state_store.get_notified_keys()
+    new_records = _collect_notification_candidates(deduped, notified_keys, today, settings, logger)
 
-    recent_cutoff = today - timedelta(days=max(settings.recent_days, 1))
-    new_records: list[BidRecord] = []
-    for record in deduped:
-        if record.uid in notified_keys:
-            continue
-
-        # 日期優先抓最近，但保留未通知過項目以降低漏抓風險。
-        if record.bid_date and record.bid_date < recent_cutoff:
-            logger.info(
-                "include_old_unnotified_bid",
-                extra={
-                    "title": record.title,
-                    "bid_date": record.bid_date.isoformat(),
-                },
-            )
-        new_records.append(record)
+    # --- Phase 1.9: Hybrid enrichment (g0v API first, gov detail fallback) ---
+    # 只對最終通知候選做補值，避免把 API/爬蟲時間花在不會發送的資料。
+    if new_records:
+        _run_hybrid_enrichment(new_records, settings, logger)
 
     # Sort by AI priority first (if available), then date and amount
     priority_order = {"high": 3, "medium": 2, "low": 1, "": 0}
@@ -244,6 +303,182 @@ def _resolve_state_store(settings: Settings, logger: Any) -> Any:
 
     logger.warning("state_store_selected", extra={"backend": "memory"})
     return InMemoryStateStore()
+
+
+def _run_hybrid_enrichment(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    target_records = _prioritize_enrichment_targets(records)
+    throttle_limit = _resolve_int_setting(settings, "hybrid_g0v_enrich_max", MAX_G0V_ENRICH_PER_RUN)
+    g0v_targets = target_records[:throttle_limit]
+    throttled_records = target_records[throttle_limit:]
+
+    if throttled_records:
+        logger.info(
+            "hybrid_g0v_throttled",
+            extra={
+                "attempting": len(g0v_targets),
+                "skipped": len(throttled_records),
+                "limit": throttle_limit,
+            },
+        )
+        for record in throttled_records:
+            if not str(record.metadata.get("enrichment_source", "")).strip():
+                _set_enrichment_marker(record, "list_only", "throttled_before_g0v_enrichment")
+
+    g0v_attempted = 0
+    g0v_enriched = 0
+    gov_fallback_candidates: list[BidRecord] = []
+
+    for record in g0v_targets:
+        if _needs_enrichment(record):
+            g0v_attempted += 1
+            try:
+                if settings.g0v_enabled and enrich_g0v_record(record, settings, logger):
+                    g0v_enriched += 1
+            except Exception as exc:
+                logger.warning("hybrid_g0v_enrich_failed", extra={"error": str(exc), "title": record.title})
+
+        if _needs_enrichment(record) and _can_use_gov_detail_fallback(record):
+            gov_fallback_candidates.append(record)
+
+    logger.info(
+        "hybrid_g0v_pass_done",
+        extra={
+            "attempted": g0v_attempted,
+            "enriched": g0v_enriched,
+            "missing_after_g0v": len(gov_fallback_candidates),
+        },
+    )
+
+    gov_limit = _resolve_int_setting(settings, "hybrid_gov_fallback_max", MAX_GOV_FALLBACK_PER_RUN)
+    if len(gov_fallback_candidates) > gov_limit:
+        logger.info(
+            "hybrid_gov_fallback_throttled",
+            extra={
+                "attempting": gov_limit,
+                "skipped": len(gov_fallback_candidates) - gov_limit,
+                "limit": gov_limit,
+            },
+        )
+    gov_fallback_targets = gov_fallback_candidates[:gov_limit]
+
+    if gov_fallback_targets:
+        before_state = {
+            id(record): (record.budget_amount or "", record.bid_bond or "")
+            for record in gov_fallback_targets
+        }
+        try:
+            enrich_gov_detail(gov_fallback_targets, settings, logger)
+        except Exception as exc:
+            logger.warning("hybrid_gov_fallback_failed", extra={"error": str(exc)})
+
+        gov_enriched = 0
+        for record in gov_fallback_targets:
+            prev_budget, prev_bond = before_state[id(record)]
+            if _has_detail_progress(prev_budget, prev_bond, record):
+                gov_enriched += 1
+                _set_enrichment_marker(record, "gov_detail", "gov_detail_fallback_after_g0v")
+
+        logger.info(
+            "hybrid_gov_fallback_done",
+            extra={
+                "attempted": len(gov_fallback_targets),
+                "enriched": gov_enriched,
+            },
+        )
+
+    for record in records:
+        if str(record.metadata.get("enrichment_source", "")).strip():
+            continue
+        if _needs_enrichment(record):
+            _set_enrichment_marker(record, "list_only", "detail_missing_after_hybrid")
+        else:
+            _set_enrichment_marker(record, "list_only", "detail_already_present")
+
+
+def _can_use_gov_detail_fallback(record: BidRecord) -> bool:
+    if not record.url:
+        return False
+    if "web.pcc.gov.tw" not in record.url:
+        return False
+
+    if record.source == "gov_pcc":
+        return True
+    if record.backup_source:
+        return "gov_pcc" in {s.strip() for s in record.backup_source.split(",")}
+    return False
+
+
+def _has_detail_progress(previous_budget: str, previous_bond: str, record: BidRecord) -> bool:
+    budget_progress = _is_missing_detail_value(previous_budget) and (not _is_missing_detail_value(record.budget_amount))
+    bond_progress = _is_missing_detail_value(previous_bond) and (not _is_missing_detail_value(record.bid_bond))
+    return budget_progress or bond_progress
+
+
+def _needs_enrichment(record: BidRecord) -> bool:
+    return _is_missing_detail_value(record.budget_amount) or _is_missing_detail_value(record.bid_bond)
+
+
+def _is_missing_detail_value(value: str) -> bool:
+    text = value.strip().lower() if value else ""
+    return text in {"", "none", "null", "無", "無提供", "n/a", "詳見連結"}
+
+
+def _set_enrichment_marker(record: BidRecord, source: str, note: str) -> None:
+    current_source = str(record.metadata.get("enrichment_source", "")).strip()
+    if current_source:
+        parts = [part for part in current_source.split("+") if part]
+        if source not in parts:
+            parts.append(source)
+        record.metadata["enrichment_source"] = "+".join(parts)
+    else:
+        record.metadata["enrichment_source"] = source
+    record.metadata["enrichment_note"] = note
+
+
+def _collect_notification_candidates(
+    records: list[BidRecord],
+    notified_keys: set[str],
+    today: date,
+    settings: Settings,
+    logger: Any,
+) -> list[BidRecord]:
+    recent_cutoff = today - timedelta(days=max(settings.recent_days, 1))
+    candidates: list[BidRecord] = []
+    for record in records:
+        if record.uid in notified_keys:
+            continue
+
+        # 日期優先抓最近，但保留未通知過項目以降低漏抓風險。
+        if record.bid_date and record.bid_date < recent_cutoff:
+            logger.info(
+                "include_old_unnotified_bid",
+                extra={
+                    "title": record.title,
+                    "bid_date": record.bid_date.isoformat(),
+                },
+            )
+        candidates.append(record)
+    return candidates
+
+
+def _prioritize_enrichment_targets(records: list[BidRecord]) -> list[BidRecord]:
+    return sorted(
+        [record for record in records if _needs_enrichment(record)],
+        key=lambda item: (
+            item.bid_date or datetime.max.date(),
+            0 if item.source == "gov_pcc" else 1,
+            item.title,
+        ),
+    )
+
+
+def _resolve_int_setting(settings: Settings, field_name: str, default: int) -> int:
+    value = getattr(settings, field_name, default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, 0)
 
 
 def _write_preview_html_if_needed(path_str: str, html: str, logger: Any) -> None:

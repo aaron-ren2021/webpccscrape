@@ -20,7 +20,7 @@ def render_email_subject(prefix: str, run_date: date, count: int, earliest_deadl
 
 
 def render_email_html(records: list[BidRecord], run_date: date, high_amount_threshold: float) -> str:
-    """Render email HTML with card-based layout."""
+    """Render email HTML with horizontal card layout."""
     unit_counts = count_by_unit_type(records)
     tag_counter: Counter[str] = Counter()
     for record in records:
@@ -60,7 +60,7 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         background: #f9fafb;
       }}
       .container {{
-        max-width: 800px;
+        max-width: 1200px;
         margin: 0 auto;
         background: #ffffff;
         padding: 24px;
@@ -95,27 +95,22 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 16px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         transition: box-shadow 0.2s;
       }}
       .bid-card:hover {{
         box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+        background: #f9fafb;
       }}
       .card-header {{
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 12px;
-        gap: 12px;
-      }}
-      .card-title {{
-        font-size: 16px;
-        font-weight: bold;
-        color: #111827;
-        flex: 1;
-        line-height: 1.4;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f3f4f6;
       }}
       .card-index {{
         background: #e5e7eb;
@@ -124,63 +119,51 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         border-radius: 4px;
         font-size: 12px;
         font-weight: bold;
-        white-space: nowrap;
+      }}
+      .card-title {{
+        font-size: 14px;
+        font-weight: 600;
+        color: #111827;
+        flex: 1;
       }}
       .card-body {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
-      }}
-      .card-row {{
         display: flex;
-        flex-direction: column;
-        gap: 4px;
-        font-size: 14px;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
       }}
-      .card-label {{
-        color: #6b7280;
+      .card-field {{
+        display: flex;
+        align-items: center;
+        gap: 6px;
         font-size: 13px;
+      }}
+      .field-label {{
+        color: #6b7280;
         font-weight: 500;
       }}
-      .card-value {{
+      .field-value {{
         color: #1f2937;
-        font-weight: 500;
       }}
       .amount-bold {{
         font-weight: bold;
         color: #059669;
-        font-size: 15px;
       }}
       .deadline-red {{
         font-weight: bold;
         color: #dc2626;
       }}
-      .priority-badge {{
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: bold;
-      }}
-      .priority-high {{
-        background: #fee2e2;
-        color: #dc2626;
-      }}
-      .priority-medium {{
-        background: #fef3c7;
-        color: #d97706;
-      }}
-      .priority-low {{
-        background: #f3f4f6;
-        color: #6b7280;
+      .bid-bond-free {{
+        color: #059669;
+        font-weight: 600;
       }}
       .tag {{
         display: inline-block;
         background: #dbeafe;
         color: #1e40af;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 12px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
         margin-right: 4px;
       }}
       .tag.software {{
@@ -191,10 +174,11 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         display: inline-block;
         background: #3b82f6;
         color: #ffffff;
-        padding: 6px 12px;
+        padding: 4px 10px;
         border-radius: 4px;
         text-decoration: none;
-        font-size: 13px;
+        font-size: 12px;
+        white-space: nowrap;
         transition: background 0.2s;
       }}
       .link-button:hover {{
@@ -208,19 +192,20 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         font-size: 13px;
         text-align: center;
       }}
-      @media (max-width: 600px) {{
+      @media (max-width: 768px) {{
         body {{
           padding: 8px;
         }}
         .container {{
-          padding: 16px;
+          padding: 12px;
         }}
-        .card-row {{
+        .card-body {{
           flex-direction: column;
-          gap: 2px;
+          align-items: flex-start;
+          gap: 8px;
         }}
-        .card-label {{
-          min-width: auto;
+        .card-field {{
+          width: 100%;
         }}
       }}
     </style>
@@ -254,39 +239,40 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
 
 
 def _render_card(index: int, record: BidRecord) -> str:
-    """Render a single bid as a card instead of table row."""
+    """Render a single bid as a horizontal card."""
     title = escape(record.title)
     org = escape(record.organization)
     
-    # Budget amount - bold formatting
-    if record.budget_amount:
-        budget = f'<span class="amount-bold">{escape(record.budget_amount)}</span>'
-    else:
-        budget = "無提供"
+    # Opening time
+    bid_opening = escape(record.bid_opening_time) if record.bid_opening_time else "詳見連結"
     
-    # Bid bond - infer "免繳" if zero or empty
-    bid_bond_raw = (record.bid_bond or "").strip()
-    if not bid_bond_raw or bid_bond_raw == "0" or bid_bond_raw.lower() in ["無", "無提供", "none"]:
-        bid_bond = '<span style="color:#059669;">免繳</span>'
-    else:
-        bid_bond = escape(bid_bond_raw)
-    
-    # Deadline - red formatting
+    # Deadline - red formatting with fallback to list-page bid_date
     bid_deadline_raw = (record.bid_deadline or "").strip()
     if bid_deadline_raw and bid_deadline_raw != "無提供":
         bid_deadline = f'<span class="deadline-red">{escape(bid_deadline_raw)}</span>'
+    elif record.bid_date:
+        bid_deadline = f'<span class="deadline-red">{escape(record.bid_date.isoformat())}</span>'
     else:
         bid_deadline = "無提供"
     
-    bid_opening = escape(record.bid_opening_time) if record.bid_opening_time else "無提供"
+    # Budget amount - bold green formatting with fallback to list-page amount
+    if record.budget_amount:
+        budget = f'<span class="amount-bold">{escape(record.budget_amount)}</span>'
+    elif record.amount_value is not None:
+        budget = f'<span class="amount-bold">{format_amount(record)}</span>'
+    elif record.amount_raw:
+        budget = escape(record.amount_raw)
+    else:
+        budget = "詳見連結"
     
-    # Source
-    source_text = record.source
-    if record.backup_source:
-        source_text = f"{record.source} (backup: {record.backup_source})"
+    # Bid bond - show "✅ 免繳" in green if empty/zero/none
+    bid_bond_raw = (record.bid_bond or "").strip()
+    if not bid_bond_raw or bid_bond_raw == "0" or bid_bond_raw.lower() in ["無", "無提供", "none"]:
+        bid_bond = '<span class="bid-bond-free">✅ 免繳</span>'
+    else:
+        bid_bond = escape(bid_bond_raw)
     
     # Tags - highlight "軟體"
-    tags_html = ""
     if record.tags:
         tag_items = []
         for tag in record.tags:
@@ -294,53 +280,64 @@ def _render_card(index: int, record: BidRecord) -> str:
             tag_items.append(f'<span class="{tag_class}">{escape(tag)}</span>')
         tags_html = " ".join(tag_items)
     else:
-        tags_html = "<span style='color:#9ca3af;'>無標籤</span>"
+        tags_html = '<span style="color:#9ca3af;">無標籤</span>'
     
     # Link button
     link = escape(record.url or "")
     if link:
         link_html = f'<a href="{link}" target="_blank" rel="noreferrer" class="link-button">📄 查看詳情</a>'
     else:
-        link_html = "<span style='color:#9ca3af;'>無連結</span>"
+        link_html = '<span style="color:#9ca3af;">無連結</span>'
+    
+    # Source
+    source_text = record.source
+    if record.backup_source:
+        source_text = f"{record.source} (backup: {record.backup_source})"
+    source_html = escape(source_text)
+    enrichment_html = _format_enrichment_source(record)
     
     return f"""
 <div class="bid-card">
   <div class="card-header">
-    <div class="card-title">{title}</div>
-    <div class="card-index">#{index}</div>
+    <span class="card-index">#{index}</span>
+    <span class="card-title">{title}</span>
   </div>
   <div class="card-body">
-    <div class="card-row">
-      <div class="card-label">🏫 機關</div>
-      <div class="card-value">{org}</div>
+    <div class="card-field">
+      <span class="field-label">🏫 機關</span>
+      <span class="field-value">{org}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">💰 預算金額</div>
-      <div class="card-value">{budget}</div>
+    <div class="card-field">
+      <span class="field-label">⭐ 開標時間</span>
+      <span class="field-value">{bid_opening}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">⏰ 截止投標</div>
-      <div class="card-value">{bid_deadline}</div>
+    <div class="card-field">
+      <span class="field-label">⏰ 截止投標</span>
+      <span class="field-value">{bid_deadline}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">📌 開標時間</div>
-      <div class="card-value">{bid_opening}</div>
+    <div class="card-field">
+      <span class="field-label">💰 預算金額</span>
+      <span class="field-value">{budget}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">💳 押標金</div>
-      <div class="card-value">{bid_bond}</div>
+    <div class="card-field">
+      <span class="field-label">💵 押標金</span>
+      <span class="field-value">{bid_bond}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">🏷️ 標籤</div>
-      <div class="card-value">{tags_html}</div>
+    <div class="card-field">
+      <span class="field-label">🏷️ 標籤</span>
+      <span class="field-value">{tags_html}</span>
     </div>
-    <div class="card-row" style="margin-top:8px;">
-      <div class="card-label">🔗 連結</div>
-      <div class="card-value">{link_html}</div>
+    <div class="card-field">
+      <span class="field-label">🔗 連結</span>
+      <span class="field-value">{link_html}</span>
     </div>
-    <div class="card-row">
-      <div class="card-label">📡 來源</div>
-      <div class="card-value">{escape(source_text)}</div>
+    <div class="card-field">
+      <span class="field-label">📌 來源</span>
+      <span class="field-value">{source_html}</span>
+    </div>
+    <div class="card-field">
+      <span class="field-label">🧩 補值</span>
+      <span class="field-value">{enrichment_html}</span>
     </div>
   </div>
 </div>
@@ -351,3 +348,19 @@ def format_amount(record: BidRecord) -> str:
     if record.amount_value is not None:
         return f"NT$ {int(record.amount_value):,}"
     return record.amount_raw or ""
+
+
+def _format_enrichment_source(record: BidRecord) -> str:
+    source_raw = str(record.metadata.get("enrichment_source", "")).strip()
+    if not source_raw:
+        return "列表頁資料"
+
+    display_map = {
+        "g0v_api": "g0v API",
+        "gov_detail": "gov 詳細頁",
+        "list_only": "列表頁資料",
+    }
+    display_parts = [display_map.get(part, part) for part in source_raw.split("+") if part]
+    if not display_parts:
+        return "列表頁資料"
+    return escape(" + ".join(display_parts))

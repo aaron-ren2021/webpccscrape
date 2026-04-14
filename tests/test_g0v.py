@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from crawler.g0v import _parse_records
+from crawler.g0v import _extract_detail_fields, _parse_records, enrich_record
+from core.models import BidRecord
 
 
 def test_parse_records_valid_data() -> None:
@@ -156,3 +157,88 @@ def test_parse_records_empty_list() -> None:
     records = _parse_records(data, mock_logger)
     
     assert len(records) == 0
+
+
+def test_extract_detail_fields_defaults_and_metadata() -> None:
+    record = BidRecord(
+        title="測試案",
+        organization="某大學",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="g0v",
+        url="https://pcc-api.openfun.app/api/detail/JOB001",
+    )
+    detail = {
+        "budget_public": False,
+        "contact": "王小姐 02-1234-5678",
+        "award_method": "最低標",
+    }
+
+    _extract_detail_fields(detail, record)
+
+    assert record.budget_amount == "未公開"
+    assert record.bid_bond == "無提供"
+    assert record.bid_deadline == "無提供"
+    assert record.bid_opening_time == "無提供"
+    assert record.metadata["contact_info"] == "王小姐 02-1234-5678"
+    assert record.metadata["award_method"] == "最低標"
+
+
+def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:
+    record = BidRecord(
+        title="測試案",
+        organization="某大學",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="gov_pcc",
+        url="https://web.pcc.gov.tw/tps/SomeDetail",
+        metadata={
+            "g0v_unit_id": "3.79.56.3",
+            "g0v_job_number": "11514",
+        },
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.request_timeout_seconds = 30
+    mock_logger = MagicMock()
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"budget_amount": "1000000", "bid_bond": "10000"}
+    mock_response.raise_for_status.return_value = None
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_response
+
+    enriched = enrich_record(record, mock_settings, mock_logger, session=mock_session)
+
+    assert enriched is True
+    assert record.budget_amount == "1000000"
+    assert record.bid_bond == "10000"
+    assert record.metadata["enrichment_source"] == "g0v_api"
+    assert record.metadata["enrichment_note"] == "g0v_tender_lookup:unit_id_job_number"
+    assert "api/tender?" in record.metadata["g0v_tender_api_url"]
+
+
+def test_enrich_record_skip_when_lookup_key_missing() -> None:
+    record = BidRecord(
+        title="測試案",
+        organization="某大學",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="gov_pcc",
+        url="https://web.pcc.gov.tw/tps/SomeDetail",
+        metadata={},
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.request_timeout_seconds = 30
+    mock_logger = MagicMock()
+    mock_session = MagicMock()
+
+    enriched = enrich_record(record, mock_settings, mock_logger, session=mock_session)
+
+    assert enriched is False
+    mock_session.get.assert_not_called()

@@ -88,9 +88,13 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
             enrich_detail_stealth(gov_records, settings, logger)
             return
         except Exception as exc:
-            logger.warning("gov_detail_stealth_failed_fallback_requests", extra={"error": str(exc)})
+            logger.warning("gov_detail_stealth_failed", extra={"error": str(exc)})
+            # If stealth fails (CAPTCHA), requests won't fare better — skip fallback
+            logger.info("gov_detail_skip_requests_fallback",
+                        extra={"reason": "detail page CAPTCHA persists across methods"})
+            return
     
-    # Fallback to traditional requests approach
+    # Fallback to traditional requests approach (only when stealth is disabled)
     enrich_detail_requests(gov_records, settings, logger)
 
 
@@ -127,8 +131,10 @@ def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: 
     )
     
     # 🔥 Batch fetch with identity rotation
+    # Only attempt first 2 URLs; if both fail with CAPTCHA, skip the rest
+    probe_urls = urls[:2]
     result = batch_stealth_fetch(
-        urls,
+        probe_urls,
         max_requests_per_identity=settings.gov_detail_max_per_identity,
         headless=settings.stealth_headless,
         timeout_ms=settings.playwright_timeout_ms,
@@ -141,6 +147,39 @@ def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: 
         proxy_list=settings.proxy_list if settings.proxy_enabled else None,
         log=logger,
     )
+    
+    # If probe succeeded on any URL, fetch the rest
+    if result.success_count > 0 and len(urls) > 2:
+        remaining_result = batch_stealth_fetch(
+            urls[2:],
+            max_requests_per_identity=settings.gov_detail_max_per_identity,
+            headless=settings.stealth_headless,
+            timeout_ms=settings.playwright_timeout_ms,
+            wait_selector="table.tb_01",
+            enable_human_behavior=settings.stealth_human_behavior,
+            enable_session_persistence=settings.stealth_session_persistence,
+            session_dir=settings.stealth_session_dir,
+            artifact_dir=settings.stealth_artifact_dir,
+            throttle_config=throttle_config,
+            proxy_list=settings.proxy_list if settings.proxy_enabled else None,
+            log=logger,
+        )
+        result.successful.extend(remaining_result.successful)
+        result.failed.extend(remaining_result.failed)
+        result.total = len(urls)
+    elif result.success_count == 0:
+        # All probes failed — skip remaining to save time
+        logger.warning(
+            "gov_detail_stealth_probe_all_failed",
+            extra={
+                "probed": len(probe_urls),
+                "skipped": max(0, len(urls) - 2),
+                "reason": "detail page CAPTCHA block, falling back to list-page data",
+            },
+        )
+        # Still mark the remaining as failed for logging
+        for url in urls[2:]:
+            result.failed.append((url, "skipped_after_probe_failure"))
     
     # Parse successful results
     url_to_record = {r.url: r for r in records if r.url}
@@ -172,14 +211,27 @@ def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: 
 
 
 def enrich_detail_requests(records: list[BidRecord], settings: Settings, logger: Any) -> None:
-    """Traditional requests-based detail enrichment (legacy fallback)."""
+    """Traditional requests-based detail enrichment (legacy fallback).
+    
+    Aborts early if first 2 consecutive requests hit CAPTCHA (gov.pcc blocks entire /tps/ path).
+    """
     session = build_session(settings)
     delay = settings.gov_detail_delay_seconds
     captcha_count = 0
+    consecutive_captcha = 0
 
     for idx, record in enumerate(records):
         if not record.url:
             continue
+
+        # Early abort: if first 2 consecutive requests all hit CAPTCHA, stop wasting time
+        if consecutive_captcha >= 2:
+            logger.warning(
+                "gov_detail_captcha_abort",
+                extra={"reason": "consecutive CAPTCHA detected, aborting detail enrichment",
+                       "consecutive": consecutive_captcha, "remaining": len(records) - idx},
+            )
+            break
 
         # Throttle requests with random delay to avoid triggering gov.pcc CAPTCHA
         if idx > 0:
@@ -197,6 +249,7 @@ def enrich_detail_requests(records: list[BidRecord], settings: Settings, logger:
 
             if _is_captcha_page(html):
                 captcha_count += 1
+                consecutive_captcha += 1
                 logger.warning(
                     "gov_detail_captcha_detected",
                     extra={"url": record.url, "attempt": 1},
@@ -222,6 +275,7 @@ def enrich_detail_requests(records: list[BidRecord], settings: Settings, logger:
 
             soup = parse_html(html)
             _extract_detail_fields(soup, record)
+            consecutive_captcha = 0  # Reset on success
         except Exception as exc:
             logger.warning("gov_detail_fetch_failed", extra={"url": record.url, "error": str(exc)})
 
@@ -327,20 +381,24 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
         bid_date = parse_bid_date(date_text)
         amount_value = parse_amount(amount_text)
 
-        output.append(
-            BidRecord(
-                title=title,
-                organization=org,
-                bid_date=bid_date,
-                amount_raw=amount_text,
-                amount_value=amount_value,
-                source=SOURCE_NAME,
-                url=normalize_url(settings.gov_url, link),
-                summary=summary,
-                metadata={
-                    "raw_date": date_text,
-                },
-            )
+        record = BidRecord(
+            title=title,
+            organization=org,
+            bid_date=bid_date,
+            amount_raw=amount_text,
+            amount_value=amount_value,
+            source=SOURCE_NAME,
+            url=normalize_url(settings.gov_url, link),
+            summary=summary,
+            metadata={
+                "raw_date": date_text,
+            },
         )
+
+        # 列表頁的截止投標日期作為 bid_deadline 的 fallback
+        if date_text:
+            record.bid_deadline = date_text
+
+        output.append(record)
     
     return output

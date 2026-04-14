@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -26,10 +27,25 @@ def main() -> int:
 
     load_dotenv(override=False)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    class _ExtraFormatter(logging.Formatter):
+        """Append extra dict fields (if any) after the log message."""
+        def format(self, record: logging.LogRecord) -> str:
+            s = super().format(record)
+            # Collect extra keys that are not standard LogRecord attributes
+            _STANDARD = logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
+            extras = {k: v for k, v in record.__dict__.items() if k not in _STANDARD and k != "message"}
+            if extras:
+                s += " " + " ".join(f"{k}={v}" for k, v in extras.items())
+            return s
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(_ExtraFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # Also log to file for local debugging.
+    Path("logs").mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler("logs/cron.log")
+    file_handler.setFormatter(_ExtraFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logging.getLogger().addHandler(file_handler)
     logger = logging.getLogger("bid-monitor-local")
 
     settings = Settings.from_env()

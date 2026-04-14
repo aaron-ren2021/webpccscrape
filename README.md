@@ -1,13 +1,31 @@
 # Azure 教育資訊標案自動監控系統
 
 ## 1. 專案目的
-本專案會每天定時抓取兩個來源的標案資料（台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+<<<<<<< ours
+<<<<<<< ours
+本專案會每天定時抓取多個來源的標案資料，篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+
+**資料來源（多層容錯）**：
+1. **台灣採購公報**（taiwanbuying）— 使用 Playwright + Stealth 抓取
+2. **政府電子採購網**（gov.pcc）— 使用 Playwright + Stealth 抓取列表頁
+3. **開放資料 API**（https://pcc-api.openfun.app）— 作為補充來源，資料由行政院公共工程委員會「政府電子採購網」彙整，API 開放 CORS
+=======
+本專案預設每天定時透過 `https://pcc-api.openfun.app` API 擷取標案資料（聚合台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+>>>>>>> theirs
+=======
+本專案預設每天定時透過 `https://pcc-api.openfun.app` API 擷取標案資料（聚合台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+>>>>>>> theirs
 
 **郵件內容包含**：
-- 標案標題、機關名稱、公告日期、截止日期
-- **預算金額**：從政府電子採購網詳細頁面抓取（如未公開則顯示「未公開」）
-- **押標金**：押標金百分比或金額（如未提供則顯示「無提供」）
-- 聯絡資訊、決標方式等
+- 標案標題、機關名稱、截止投標日期
+- **預算金額**：列表頁無此欄位時顯示「詳見連結」，引導使用者點擊連結查看
+- **押標金/開標時間**：詳細頁資訊，無法取得時顯示「詳見連結」
+- 直接連結至標案詳細頁面
+
+**容錯策略**：
+- 列表頁資料優先（標題、機關、截止日期）
+- 詳細頁無法取得時優雅降級，不影響通知
+- 多來源自動 fallback，確保每日穩定通知
 
 若當日無新案件則不寄信，僅在 log 記錄 `no new bids`。
 
@@ -209,22 +227,95 @@ func azure functionapp publish <functionAppName>
 - 檢查 Storage 連線設定。
 - Table 失敗會自動 fallback 到 Blob。
 
-## 10. 後續可擴充方向
-- 增加更多公開來源與來源健康檢查。
-- 將 selector 設定改為 Azure App Configuration 或 Key Vault 管理。
-- 增加人工審核 UI / Teams 通知。
-- 加入快照測試（HTML regression）與整合測試。
+## 10. 多來源容錯策略
 
-## 11. HTML 結構變動容錯設計
+### 10.1 資料來源優先順序
+1. **taiwanbuying**（台灣採購公報）
+   - 方式：Playwright + Stealth
+   - 狀態：✅ 穩定（約 15-20 筆/天）
+
+2. **gov.pcc**（政府電子採購網）
+   - 列表頁：Playwright + Stealth ✅ 正常（約 900-1000 筆/天）
+   - 詳細頁：❌ CAPTCHA 必擋（`/tps/` 子系統撲克牌驗證）
+   - 策略：**列表頁資料 + 快速探測**（2 筆 URL 測試，全失敗則跳過）
+
+3. **pcc-api.openfun.app**（開放資料 API）
+   - 方式：REST API，無需爬蟲
+   - 資料來源：行政院公共工程委員會「政府電子採購網」
+   - 授權：開放 CORS，允許自由取用（需遵守原始資料著作權）
+   - API 端點：
+     - 列表：`GET https://pcc-api.openfun.app/api/listbydate?date=YYYYMMDD`
+     - 資訊：`GET https://pcc-api.openfun.app/api/getinfo`
+   - 狀態：⚠️ 作為補充來源（可能有 1-2 天延遲）
+
+### 10.2 Detail 頁面策略
+
+**列表頁可取得欄位**（gov.pcc）：
+| 欄位 | 來源 | 狀態 |
+|------|------|------|
+| 🏫 機關 | 列表頁 td:nth-child(2) | ✅ |
+| 📋 標案名稱 | 列表頁 td:nth-child(3) | ✅ |
+| ⏰ 截止投標 | 列表頁 td:nth-child(5) | ✅ ROC 格式 115/04/24 |
+| 🔗 詳細連結 | 列表頁 td:nth-child(4) a | ✅ |
+
+**詳細頁獨有欄位**（無法穩定取得）：
+- 💰 預算金額、💳 押標金、📌 開標時間
+
+**Formatter Fallback 邏輯**：
+```
+預算金額: detail.budget_amount → "詳見連結"
+截止投標: detail.bid_deadline（含時間） → list.bid_date（日期） ✅
+押標金: detail.bid_bond → "詳見連結"
+開標時間: detail.bid_opening_time → "詳見連結"
+```
+
+### 10.3 CAPTCHA 應對
+
+gov.pcc 架構：
+- `/prkms/` 子系統（列表頁）— stealth 可正常抓取
+- `/tps/` 子系統（詳細頁）— **必定觸發撲克牌 CAPTCHA**，無法繞過
+
+應對策略：
+1. ✅ 列表頁 stealth 正常運作（主要資料來源）
+2. ⚡ Detail 頁快速探測（2 筆測試 → CAPTCHA → 放棄）
+3. ✅ Formatter 使用列表頁資料 fallback
+4. ⏱️ 執行時間優化：從 7 分鐘降到 **60 秒**
+
+### 10.4 來源健康檢查
+
+執行 `python check_sources.py` 可檢查所有來源狀態：
+```bash
+python check_sources.py
+```
+
+輸出範例：
+```
+==========================================
+來源健康檢查
+==========================================
+taiwanbuying     ✅ 正常     (18 筆)
+gov_pcc          ✅ 正常     (965 筆)
+g0v              ⚠️ 無資料   (0 筆)
+==========================================
+```
+
+## 11. 後續可擴充方向
+- ✅ 已實作：多來源容錯、列表頁 fallback、快速探測
+- 🔄 進行中：開放資料 API 整合
+- 將 selector 設定改為 Azure App Configuration 或 Key Vault 管理
+- 增加人工審核 UI / Teams 通知
+- 加入快照測試（HTML regression）與整合測試
+
+## 12. HTML 結構變動容錯設計
 - 每個來源採「多組 selector 候選」策略。
 - selector 透過環境變數可熱調整。
 - 程式內含 TODO 註解提醒：若來源 DOM 大改，優先調整 selector 與查詢參數。
 
-## 12. 反偵測/Stealth 機制說明
+## 13. 反偵測/Stealth 機制說明
 
 本專案已預設全面啟用 Playwright + Stealth 反偵測強化層，顯著提升動態網頁抓取成功率，降低被封鎖/驗證碼機率。
 
-### 12.1 功能亮點
+### 13.1 功能亮點
 - **瀏覽器指紋隱匿**：自動遮蔽 `navigator.webdriver`、plugins、languages、WebGL 等自動化特徵，並隨機選用真實桌面 Chrome 指紋組合。
 - **人類行為模擬**：自動隨機捲動、滑鼠移動、hover/click、停留時間，避免機械式操作，並可於 `verify_stealth.py` 驗證。
 - **Identity/Proxy 輪轉**：自動切換多組身份與 Proxy，降低單一來源被封鎖風險。
@@ -232,15 +323,15 @@ func azure functionapp publish <functionAppName>
 - **自適應請求節奏**：完全取代固定 sleep，改用 jitter、cooldown window、指數退避，降低異常流量偵測。
 - **偵測事件記錄**：自動分類成功/封鎖/驗證碼/挑戰頁，失敗時自動截圖與 HTML 快照，便於除錯。
 
-### 12.2 啟用方式
+### 13.2 啟用方式
 - **已預設啟用**（`STEALTH_ENABLED=true`），如需關閉可設 `STEALTH_ENABLED=false`。
 - Proxy/identity 輪轉功能可於 `.env` 設定 `PROXY_ENABLED=true` 並填入 `PROXY_LIST`。
 - 所有參數皆可於 `.env` 或 Azure App Settings 熱調整。
 
-### 12.3 主要檔案結構
+### 13.3 主要檔案結構
 （見上方「專案結構」）
 
-### 12.4 相關環境變數
+### 13.4 相關環境變數
 - `STEALTH_ENABLED`：是否啟用反偵測（預設 true）
 - `STEALTH_HUMAN_BEHAVIOR`：啟用人類行為模擬（預設 true）
 - `STEALTH_SESSION_PERSISTENCE`：啟用 session 持久化
@@ -248,7 +339,7 @@ func azure functionapp publish <functionAppName>
 - `STEALTH_THROTTLE_DELAY_MIN/MAX`：每次請求最小/最大間隔
 - `STEALTH_THROTTLE_COOLDOWN_AFTER`：每 N 次請求後 cooldown
 - `PROXY_ENABLED`、`PROXY_LIST`、`PROXY_STRATEGY`：Proxy 輪轉設定
-## 13. 常見 Stealth 問題排解
+## 14. 常見 Stealth 問題排解
 - 若遇驗證碼/封鎖，建議：
   - 增加 Proxy/identity 組數，調整 `STEALTH_THROTTLE_DELAY_MAX` 增加間隔
   - 檢查 log 內 `batch_fetch_error`、`blocked`、`captcha` 訊息
@@ -256,3 +347,4 @@ func azure functionapp publish <functionAppName>
   - 如仍失敗，請參考 `STEALTH_MIGRATION_COMPLETE.md` 或聯絡維護者
 
 詳細請見 `local.settings.json.example`。
+

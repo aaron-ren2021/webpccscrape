@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from typing import Any, Callable, Optional
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright, TimeoutError as PwTimeout
@@ -121,6 +122,7 @@ def batch_stealth_fetch(
         current_context: Optional[BrowserContext] = None
         current_page: Optional[Page] = None
         current_domain: str = ""
+        current_identity_id: str = ""
 
         try:
             for idx, url in enumerate(urls):
@@ -139,6 +141,7 @@ def batch_stealth_fetch(
                 should_create_context = (
                     current_context is None
                     or domain != current_domain
+                    or identity.id != current_identity_id
                 )
 
                 if should_create_context:
@@ -170,6 +173,7 @@ def batch_stealth_fetch(
                     )
                     current_page = current_context.new_page()
                     current_domain = domain
+                    current_identity_id = identity.id
 
                     log.info(
                         "batch_context_created",
@@ -217,6 +221,15 @@ def batch_stealth_fetch(
                     log.warning("batch_fetch_error", extra={"url": url, "error": str(exc)})
                     result.failed.append((url, f"error: {exc}"))
                     identity_mgr.record_request(success=False)
+
+                    # Context may be stale/crashed — close it so next iteration recreates
+                    if current_context:
+                        try:
+                            current_context.close()
+                        except Exception:
+                            pass
+                        current_context = None
+                        current_page = None
                     continue
 
                 # Classify outcome
@@ -296,10 +309,8 @@ def batch_stealth_fetch(
                             current_context = None
                             current_page = None
                         
-                        # Long cooldown: 60-180 seconds
-                        import random
-                        import time
-                        cooldown = random.uniform(60, 180)
+                        # Short cooldown for probing; long cooldown for bulk
+                        cooldown = random.uniform(5, 15)
                         log.warning(
                             "fail_fast_reset",
                             extra={
@@ -316,8 +327,6 @@ def batch_stealth_fetch(
                         CrawlOutcome.SOFT_BLOCK,
                     ):
                         # Moderate cooldown: 20-60 seconds
-                        import random
-                        import time
                         cooldown = random.uniform(20, 60)
                         log.info(
                             "recoverable_failure_cooldown",

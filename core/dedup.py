@@ -14,6 +14,13 @@ SOURCE_PRIORITY = {
     "g0v": 1,
 }
 
+KEYWORD_CONFIDENCE_PRIORITY = {
+    "high_confidence": 2,
+    "boundary": 1,
+    "excluded_low_score": 0,
+    "excluded_strong": 0,
+}
+
 
 def deduplicate_bids(records: list[BidRecord]) -> list[BidRecord]:
     if not records:
@@ -103,12 +110,14 @@ def _merge_records(a: BidRecord, b: BidRecord) -> BidRecord:
     merged_backup = _merge_backup_sources(keep, drop)
     merged_tags = sorted(set(keep.tags + drop.tags))
     merged_summary = keep.summary if len(keep.summary) >= len(drop.summary) else drop.summary
+    merged_metadata = _merge_metadata(keep, drop)
 
     merged = replace(
         keep,
         backup_source=merged_backup,
         tags=merged_tags,
         summary=merged_summary,
+        metadata=merged_metadata,
     )
     return merged
 
@@ -138,3 +147,89 @@ def _merge_backup_sources(keep: BidRecord, drop: BidRecord) -> Optional[str]:
             if ss and ss != keep.source and ss not in sources:
                 sources.append(ss)
     return ",".join(sources) if sources else None
+
+
+def _merge_metadata(keep: BidRecord, drop: BidRecord) -> dict[str, object]:
+    merged: dict[str, object] = dict(keep.metadata or {})
+    for key, value in (drop.metadata or {}).items():
+        if key not in merged or _is_missing_metadata_value(merged.get(key)):
+            merged[key] = value
+
+    _promote_g0v_lookup_metadata(merged, keep)
+    _promote_g0v_lookup_metadata(merged, drop)
+    _merge_keyword_metadata(merged, keep)
+    _merge_keyword_metadata(merged, drop)
+    return merged
+
+
+def _promote_g0v_lookup_metadata(merged: dict[str, object], record: BidRecord) -> None:
+    metadata = record.metadata or {}
+    unit_id = _first_non_empty(metadata.get("g0v_unit_id"), metadata.get("unit_id"))
+    job_number = _first_non_empty(metadata.get("g0v_job_number"), metadata.get("job_number"))
+    tender_api_url = _first_non_empty(
+        metadata.get("g0v_tender_api_url"),
+        metadata.get("tender_api_url"),
+        record.url if "/api/tender" in record.url else "",
+    )
+
+    if unit_id and _is_missing_metadata_value(merged.get("g0v_unit_id")):
+        merged["g0v_unit_id"] = unit_id
+    if job_number and _is_missing_metadata_value(merged.get("g0v_job_number")):
+        merged["g0v_job_number"] = job_number
+    if tender_api_url and _is_missing_metadata_value(merged.get("g0v_tender_api_url")):
+        merged["g0v_tender_api_url"] = tender_api_url
+
+
+def _merge_keyword_metadata(merged: dict[str, object], record: BidRecord) -> None:
+    metadata = record.metadata or {}
+    confidence = str(metadata.get("keyword_confidence") or "").strip()
+    current_confidence = str(merged.get("keyword_confidence") or "").strip()
+    if KEYWORD_CONFIDENCE_PRIORITY.get(confidence, -1) > KEYWORD_CONFIDENCE_PRIORITY.get(current_confidence, -1):
+        merged["keyword_confidence"] = confidence
+
+    score = metadata.get("keyword_score")
+    if isinstance(score, (int, float)):
+        current_score = merged.get("keyword_score")
+        if not isinstance(current_score, (int, float)) or score > current_score:
+            merged["keyword_score"] = score
+
+    matched_terms = metadata.get("keyword_matched_terms")
+    if isinstance(matched_terms, list):
+        merged_terms = list(merged.get("keyword_matched_terms") or [])
+        for term in matched_terms:
+            if term not in merged_terms:
+                merged_terms.append(term)
+        if merged_terms:
+            merged["keyword_matched_terms"] = merged_terms
+
+    reasons = metadata.get("keyword_reasons")
+    if isinstance(reasons, list):
+        merged_reasons = list(merged.get("keyword_reasons") or [])
+        for reason in reasons:
+            if reason not in merged_reasons:
+                merged_reasons.append(reason)
+        if merged_reasons:
+            merged["keyword_reasons"] = merged_reasons
+
+    filter_source = str(metadata.get("filter_source") or "").strip()
+    current_filter_source = str(merged.get("filter_source") or "").strip()
+    if KEYWORD_CONFIDENCE_PRIORITY.get(confidence, -1) > KEYWORD_CONFIDENCE_PRIORITY.get(current_confidence, -1) and filter_source:
+        merged["filter_source"] = filter_source
+
+
+def _first_non_empty(*values: object) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _is_missing_metadata_value(value: object | None) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False

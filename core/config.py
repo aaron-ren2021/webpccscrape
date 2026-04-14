@@ -110,6 +110,7 @@ class Settings:
 
     g0v_api_url: str = "https://pcc-api.openfun.app/api/listbydate"
     g0v_enabled: bool = True
+    api_only_mode: bool = False
 
     azure_storage_connection_string: str = ""
     azure_table_name: str = "BidNotifyState"
@@ -138,6 +139,18 @@ class Settings:
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     ai_model: str = ""  # e.g. "gpt-4o-mini" or "claude-sonnet-4-20250514"
+    
+    # --- Local LLM (Ollama) ---
+    ollama_base_url: str = ""  # e.g. "http://localhost:11434/v1"
+    ollama_model: str = "qwen2.5:3b"  # 輕量版模型
+    ollama_timeout_seconds: int = 90
+    use_validation_mode: bool = True  # 是否使用驗證模式（僅驗證+評分，不生成摘要）
+    
+    # --- Embedding semantic recall ---
+    enable_embedding_recall: bool = False
+    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_top_k: int = 30
+    embedding_similarity_threshold: float = 0.62
 
     # --- GitHub Issue tracking ---
     github_token: str = ""
@@ -194,7 +207,8 @@ class Settings:
             gov_date_selectors=_parse_csv(os.getenv("GOV_DATE_SELECTORS"))
             or [".date", ".publish-date", "time", "td:nth-child(1)"],
             gov_amount_selectors=_parse_csv(os.getenv("GOV_AMOUNT_SELECTORS"))
-            or [".amount", ".price", "td:nth-child(5)"],
+            if os.getenv("GOV_AMOUNT_SELECTORS") is not None
+            else [".amount", ".price", "td:nth-child(5)"],
             gov_summary_selectors=_parse_csv(os.getenv("GOV_SUMMARY_SELECTORS"))
             or [".summary", ".desc", "td:nth-child(4)"],
             gov_link_selectors=_parse_csv(os.getenv("GOV_LINK_SELECTORS")) or ["a"],
@@ -202,6 +216,7 @@ class Settings:
             gov_detail_max_per_identity=_parse_int(os.getenv("GOV_DETAIL_MAX_PER_IDENTITY"), 3),
             g0v_api_url=os.getenv("G0V_API_URL", "https://pcc-api.openfun.app/api/listbydate"),
             g0v_enabled=_parse_bool(os.getenv("G0V_ENABLED"), True),
+            api_only_mode=_parse_bool(os.getenv("API_ONLY_MODE"), False),
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
             azure_table_name=os.getenv("AZURE_TABLE_NAME", "BidNotifyState"),
             azure_blob_container=os.getenv("AZURE_BLOB_CONTAINER", "bid-state"),
@@ -224,6 +239,16 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             ai_model=os.getenv("AI_MODEL", ""),
+            # --- Local LLM (Ollama) ---
+            ollama_base_url=os.getenv("OLLAMA_BASE_URL", ""),
+            ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:3b"),
+            ollama_timeout_seconds=_parse_int(os.getenv("OLLAMA_TIMEOUT_SECONDS"), 90),
+            use_validation_mode=_parse_bool(os.getenv("USE_VALIDATION_MODE"), True),
+            # --- Embedding semantic recall ---
+            enable_embedding_recall=_parse_bool(os.getenv("ENABLE_EMBEDDING_RECALL"), False),
+            embedding_model=os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"),
+            embedding_top_k=_parse_int(os.getenv("EMBEDDING_TOP_K"), 30),
+            embedding_similarity_threshold=_parse_float(os.getenv("EMBEDDING_SIMILARITY_THRESHOLD"), 0.62),
             # --- Stealth / anti-detection ---
             stealth_enabled=_parse_bool(os.getenv("STEALTH_ENABLED"), True),
             stealth_human_behavior=_parse_bool(os.getenv("STEALTH_HUMAN_BEHAVIOR"), True),
