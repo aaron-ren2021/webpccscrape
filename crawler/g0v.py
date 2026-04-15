@@ -142,10 +142,10 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
             
             organization = (item.get("unit_name") or "").strip()
             
-            # Parse date (integer format YYYYMMDD)
+            # Parse announcement date (integer format YYYYMMDD)
             date_int = item.get("date")
             date_str = str(date_int) if date_int else ""
-            bid_date = parse_bid_date(date_str)
+            announcement_date = parse_bid_date(date_str)
             
             # Extract category from brief
             category = brief.get("category", "")
@@ -176,13 +176,15 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
                 BidRecord(
                     title=title[:300],
                     organization=organization,
-                    bid_date=bid_date,
+                    # g0v list `date` is announcement date, not bid deadline.
+                    bid_date=None,
                     amount_raw=amount_text,
                     amount_value=amount_value,
                     source=SOURCE_NAME,
                     url=human_url,
                     summary="",
                     category=category,
+                    announcement_date=announcement_date,
                     metadata={
                         "raw_date": date_str,
                         "brief_type": tender_type,

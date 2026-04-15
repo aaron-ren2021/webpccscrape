@@ -198,10 +198,11 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     deduped = deduplicate_bids(filtered)
 
     for record in deduped:
+        uid_date = record.bid_date or record.announcement_date
         record.uid = build_bid_uid(
             title=record.title,
             org=record.organization,
-            bid_date=record.bid_date,
+            bid_date=uid_date,
             amount=record.amount_value,
             amount_raw=record.amount_raw,
         )
@@ -624,6 +625,19 @@ def _collect_notification_candidates(
     for record in records:
         if record.uid in notified_keys:
             continue
+
+        if settings.g0v_notify_today_only and record.source == "g0v":
+            announcement_date = record.announcement_date or record.bid_date
+            if announcement_date and announcement_date != today:
+                logger.info(
+                    "skip_non_today_g0v_announcement",
+                    extra={
+                        "title": record.title,
+                        "announcement_date": announcement_date.isoformat(),
+                        "today": today.isoformat(),
+                    },
+                )
+                continue
 
         # 日期優先抓最近，但保留未通知過項目以降低漏抓風險。
         if record.bid_date and record.bid_date < recent_cutoff:

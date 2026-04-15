@@ -246,12 +246,10 @@ def _render_card(index: int, record: BidRecord) -> str:
     # Opening time
     bid_opening = escape(record.bid_opening_time) if record.bid_opening_time else "詳見連結"
     
-    # Deadline - red formatting with fallback to list-page bid_date
+    # Deadline - only show explicit deadline value from detail/list field.
     bid_deadline_raw = (record.bid_deadline or "").strip()
     if bid_deadline_raw and bid_deadline_raw != "無提供":
         bid_deadline = f'<span class="deadline-red">{escape(bid_deadline_raw)}</span>'
-    elif record.bid_date:
-        bid_deadline = f'<span class="deadline-red">{escape(record.bid_date.isoformat())}</span>'
     else:
         bid_deadline = "無提供"
     

@@ -22,6 +22,7 @@ class BidRecord:
     backup_source: Optional[str] = None
     uid: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    announcement_date: Optional[date] = None
 
     # Detail page fields
     budget_amount: str = ""

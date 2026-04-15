@@ -34,6 +34,9 @@ def test_parse_records_valid_data() -> None:
     assert records[0].source == "g0v"
     assert records[0].category == "資訊設備類"
     assert records[0].url == "https://pcc-api.openfun.app/api/detail/JOB001"
+    assert records[0].bid_date is None
+    assert records[0].announcement_date is not None
+    assert records[0].announcement_date.isoformat() == "2025-04-07"
     assert records[0].metadata["job_number"] == "JOB001"
 
 
