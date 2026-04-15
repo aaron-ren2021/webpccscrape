@@ -170,7 +170,7 @@ def test_phase2_embedding_recall():
     try:
         recalled = recall_bids_with_embedding(
             filtered,
-            model_name="paraphrase-multilingual-MiniLM-L12-v2",
+            model_name="BAAI/bge-m3",
             top_k=10,
             similarity_threshold=0.6,
         )

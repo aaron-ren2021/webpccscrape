@@ -149,9 +149,9 @@ pip install -r requirements.txt
 ```bash
 # .env 或 local.settings.json
 ENABLE_EMBEDDING_RECALL=true
-EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
-EMBEDDING_TOP_K=50
-EMBEDDING_SIMILARITY_THRESHOLD=0.65
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_TOP_K=30
+EMBEDDING_SIMILARITY_THRESHOLD=0.68
 ```
 
 ### 3. 執行測試
@@ -182,10 +182,12 @@ python run_local.py --no-send --preview-html ./output/preview.html
 
 ### Embedding 模型
 
-- **模型**: `paraphrase-multilingual-MiniLM-L12-v2`
-- **大小**: 50MB
-- **語言**: 支援中文（繁體/簡體）
-- **推理速度**: CPU 環境下 20-50ms/筆
+- **模型**: `BAAI/bge-m3`
+- **大小**: ~2.3GB
+- **語言**: 支援 100+ 語言，繁體中文表現優秀（MIRACL zh 基準測試）
+- **上下文長度**: 8192 tokens（適合完整標案規格書）
+- **推理速度**: CPU 環境下 50-100ms/筆
+- **特性**: 原生支援 dense + sparse + ColBERT hybrid search
 
 ### 相似度計算
 

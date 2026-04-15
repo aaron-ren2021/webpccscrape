@@ -20,9 +20,9 @@ class EmbeddingRecaller:
     
     def __init__(
         self,
-        model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+        model_name: str = "BAAI/bge-m3",
         top_k: int = 30,
-        similarity_threshold: float = 0.62,
+        similarity_threshold: float = 0.68,
         log: Any | None = None,
     ):
         """
@@ -175,9 +175,9 @@ class EmbeddingRecaller:
 def recall_bids_with_embedding(
     candidates: list[BidRecord],
     *,
-    model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+    model_name: str = "BAAI/bge-m3",
     top_k: int = 30,
-    similarity_threshold: float = 0.62,
+    similarity_threshold: float = 0.68,
     log: Any | None = None,
 ) -> list[BidRecord]:
     """

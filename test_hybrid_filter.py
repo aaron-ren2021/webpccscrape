@@ -224,7 +224,7 @@ def test_embedding_recall(keyword_filtered: list[BidRecord]):
         # 執行 embedding recall
         recalled = recall_bids_with_embedding(
             keyword_filtered,
-            model_name="paraphrase-multilingual-MiniLM-L12-v2",
+            model_name="BAAI/bge-m3",
             top_k=20,  # 取前 20 個
             similarity_threshold=0.5,  # 降低閾值以觀察更多結果
         )

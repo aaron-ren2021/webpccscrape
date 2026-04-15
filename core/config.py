@@ -148,9 +148,9 @@ class Settings:
     
     # --- Embedding semantic recall ---
     enable_embedding_recall: bool = False
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "BAAI/bge-m3"
     embedding_top_k: int = 30
-    embedding_similarity_threshold: float = 0.62
+    embedding_similarity_threshold: float = 0.68
 
     # --- GitHub Issue tracking ---
     github_token: str = ""
@@ -246,9 +246,9 @@ class Settings:
             use_validation_mode=_parse_bool(os.getenv("USE_VALIDATION_MODE"), True),
             # --- Embedding semantic recall ---
             enable_embedding_recall=_parse_bool(os.getenv("ENABLE_EMBEDDING_RECALL"), False),
-            embedding_model=os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"),
+            embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
             embedding_top_k=_parse_int(os.getenv("EMBEDDING_TOP_K"), 30),
-            embedding_similarity_threshold=_parse_float(os.getenv("EMBEDDING_SIMILARITY_THRESHOLD"), 0.62),
+            embedding_similarity_threshold=_parse_float(os.getenv("EMBEDDING_SIMILARITY_THRESHOLD"), 0.68),
             # --- Stealth / anti-detection ---
             stealth_enabled=_parse_bool(os.getenv("STEALTH_ENABLED"), True),
             stealth_human_behavior=_parse_bool(os.getenv("STEALTH_HUMAN_BEHAVIOR"), True),

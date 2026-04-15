@@ -19,9 +19,9 @@ pip install sentence-transformers scikit-learn
 ENABLE_EMBEDDING_RECALL=true
 
 # 可選配置（使用預設值即可）
-EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
-EMBEDDING_TOP_K=50
-EMBEDDING_SIMILARITY_THRESHOLD=0.65
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_TOP_K=30
+EMBEDDING_SIMILARITY_THRESHOLD=0.68
 ```
 
 ### 3. 測試執行
@@ -56,9 +56,9 @@ python run_local.py
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
 | `ENABLE_EMBEDDING_RECALL` | `false` | 是否啟用 embedding 語意召回 |
-| `EMBEDDING_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Sentence-transformers 模型名稱 |
-| `EMBEDDING_TOP_K` | `50` | 召回前 K 個候選 |
-| `EMBEDDING_SIMILARITY_THRESHOLD` | `0.65` | 最低相似度閾值（0-1） |
+| `EMBEDDING_MODEL` | `BAAI/bge-m3` | Sentence-transformers 模型名稱 |
+| `EMBEDDING_TOP_K` | `30` | 召回前 K 個候選 |
+| `EMBEDDING_SIMILARITY_THRESHOLD` | `0.68` | 最低相似度閾值（0-1） |
 
 ---
 
@@ -95,7 +95,7 @@ pip install sentence-transformers scikit-learn
 首次執行會自動下載 50MB 模型，之後會快取。可預先下載：
 
 ```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
 ```
 
 ### Q3: 想要關閉 Embedding 功能

@@ -104,7 +104,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             original_count = len(keyword_boundary_candidates)
             recalled_boundary = recall_bids_with_embedding(
                 keyword_boundary_candidates,
-                model_name=getattr(settings, 'embedding_model', 'paraphrase-multilingual-MiniLM-L12-v2'),
+                model_name=getattr(settings, 'embedding_model', 'BAAI/bge-m3'),
                 top_k=getattr(settings, 'embedding_top_k', 30),
                 similarity_threshold=getattr(settings, 'embedding_similarity_threshold', 0.62),
                 log=logger,
