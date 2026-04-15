@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import resource
+import time
+import copy
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +29,117 @@ from storage.table_store import TableStateStore
 
 MAX_G0V_ENRICH_PER_RUN = 40
 MAX_GOV_FALLBACK_PER_RUN = 12
+
+
+def _process_memory_mb() -> float:
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if os.name == "posix" and "darwin" in os.sys.platform:
+        return usage / (1024 * 1024)
+    return usage / 1024
+
+
+def _log_perf_warning(logger: Any, settings: Settings, *, step_name: str, duration_ms: float, memory_mb: float) -> None:
+    if duration_ms >= settings.embedding_timeout_warn_ms:
+        logger.warning(
+            "embedding_duration_warning",
+            extra={
+                "step_name": step_name,
+                "duration_ms": round(duration_ms, 2),
+                "memory_mb": round(memory_mb, 2),
+                "warn_threshold_ms": settings.embedding_timeout_warn_ms,
+            },
+        )
+    if memory_mb >= settings.embedding_memory_warn_mb:
+        logger.warning(
+            "embedding_memory_warning",
+            extra={
+                "step_name": step_name,
+                "duration_ms": round(duration_ms, 2),
+                "memory_mb": round(memory_mb, 2),
+                "warn_threshold_mb": settings.embedding_memory_warn_mb,
+            },
+        )
+
+
+def _build_ab_rows(records: list[BidRecord], *, model_name: str, threshold: float, decision_source: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.metadata or {}
+        rows.append(
+            {
+                "uid": record.uid,
+                "title": record.title,
+                "keyword_confidence": metadata.get("keyword_confidence", ""),
+                "embedding_similarity": metadata.get("embedding_similarity"),
+                "embedding_best_category": metadata.get("embedding_best_category", ""),
+                "decision_source": decision_source,
+                "model_name": model_name,
+                "threshold": threshold,
+            }
+        )
+    return rows
+
+
+def _log_embedding_ab_comparison(
+    logger: Any,
+    *,
+    primary_rows: list[dict[str, Any]],
+    ab_rows: list[dict[str, Any]],
+    primary_model: str,
+    primary_threshold: float,
+    ab_model: str,
+    ab_threshold: float,
+) -> None:
+    for row in primary_rows:
+        logger.info("embedding_ab_dataset_row", extra={**row, "variant": "primary"})
+    for row in ab_rows:
+        logger.info("embedding_ab_dataset_row", extra={**row, "variant": "ab"})
+
+    primary_map = {row["uid"]: row for row in primary_rows}
+    ab_map = {row["uid"]: row for row in ab_rows}
+    all_uids = sorted(set(primary_map) | set(ab_map))
+    changed = 0
+
+    for uid in all_uids:
+        primary = primary_map.get(uid)
+        ab = ab_map.get(uid)
+        primary_decision = "kept" if primary else "dropped"
+        ab_decision = "kept" if ab else "dropped"
+        if primary_decision != ab_decision:
+            changed += 1
+        sample = primary or ab or {}
+        logger.info(
+            "embedding_ab_row",
+            extra={
+                "uid": uid,
+                "title": sample.get("title", ""),
+                "keyword_confidence": sample.get("keyword_confidence", ""),
+                "primary_decision_source": primary["decision_source"] if primary else "not_selected",
+                "ab_decision_source": ab["decision_source"] if ab else "not_selected",
+                "primary_embedding_similarity": primary["embedding_similarity"] if primary else None,
+                "ab_embedding_similarity": ab["embedding_similarity"] if ab else None,
+                "primary_embedding_best_category": primary["embedding_best_category"] if primary else "",
+                "ab_embedding_best_category": ab["embedding_best_category"] if ab else "",
+                "primary_model_name": primary_model,
+                "ab_model_name": ab_model,
+                "primary_threshold": primary_threshold,
+                "ab_threshold": ab_threshold,
+                "decision_changed": primary_decision != ab_decision,
+            },
+        )
+
+    logger.info(
+        "embedding_ab_summary",
+        extra={
+            "primary_model_name": primary_model,
+            "ab_model_name": ab_model,
+            "primary_threshold": primary_threshold,
+            "ab_threshold": ab_threshold,
+            "primary_count": len(primary_rows),
+            "ab_count": len(ab_rows),
+            "changed_count": changed,
+        },
+    )
 
 
 class InMemoryStateStore:
@@ -102,12 +217,38 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             from core.embedding_recall import recall_bids_with_embedding
             
             original_count = len(keyword_boundary_candidates)
+            primary_model = settings.embedding_model
+            primary_top_k = settings.embedding_top_k
+            primary_threshold = settings.embedding_similarity_threshold
+            recall_start = time.perf_counter()
             recalled_boundary = recall_bids_with_embedding(
                 keyword_boundary_candidates,
-                model_name=getattr(settings, 'embedding_model', 'BAAI/bge-m3'),
-                top_k=getattr(settings, 'embedding_top_k', 30),
-                similarity_threshold=getattr(settings, 'embedding_similarity_threshold', 0.62),
+                model_name=primary_model,
+                top_k=primary_top_k,
+                similarity_threshold=primary_threshold,
                 log=logger,
+            )
+            recall_duration_ms = (time.perf_counter() - recall_start) * 1000
+            recall_memory_mb = _process_memory_mb()
+            logger.info(
+                "embedding_recall_pipeline_step",
+                extra={
+                    "step_name": "embedding_recall_pipeline",
+                    "duration_ms": round(recall_duration_ms, 2),
+                    "candidate_count": original_count,
+                    "result_count": len(recalled_boundary),
+                    "memory_mb": round(recall_memory_mb, 2),
+                    "model_name": primary_model,
+                    "threshold": primary_threshold,
+                    "top_k": primary_top_k,
+                },
+            )
+            _log_perf_warning(
+                logger,
+                settings,
+                step_name="embedding_recall_pipeline",
+                duration_ms=recall_duration_ms,
+                memory_mb=recall_memory_mb,
             )
             for record in recalled_boundary:
                 record.metadata["filter_source"] = "keyword_boundary_embedding"
@@ -121,6 +262,42 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
                     "filtered_out": original_count - len(recalled_boundary),
                 }
             )
+
+            if settings.embedding_enable_ab_test:
+                ab_model = settings.embedding_ab_model or primary_model
+                ab_threshold = settings.embedding_ab_similarity_threshold
+                ab_top_k = settings.embedding_ab_top_k
+                try:
+                    ab_recalled = recall_bids_with_embedding(
+                        copy.deepcopy(keyword_boundary_candidates),
+                        model_name=ab_model,
+                        top_k=ab_top_k,
+                        similarity_threshold=ab_threshold,
+                        log=logger,
+                    )
+                    primary_rows = _build_ab_rows(
+                        recalled_boundary,
+                        model_name=primary_model,
+                        threshold=primary_threshold,
+                        decision_source="keyword_boundary_embedding_primary",
+                    )
+                    ab_rows = _build_ab_rows(
+                        ab_recalled,
+                        model_name=ab_model,
+                        threshold=ab_threshold,
+                        decision_source="keyword_boundary_embedding_ab",
+                    )
+                    _log_embedding_ab_comparison(
+                        logger,
+                        primary_rows=primary_rows,
+                        ab_rows=ab_rows,
+                        primary_model=primary_model,
+                        primary_threshold=primary_threshold,
+                        ab_model=ab_model,
+                        ab_threshold=ab_threshold,
+                    )
+                except Exception as exc:
+                    logger.warning("embedding_ab_failed", extra={"error": str(exc)})
         except ImportError:
             logger.warning(
                 "embedding_recall_skipped_dependency_missing",

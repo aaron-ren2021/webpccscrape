@@ -151,6 +151,13 @@ class Settings:
     embedding_model: str = "BAAI/bge-m3"
     embedding_top_k: int = 30
     embedding_similarity_threshold: float = 0.68
+    embedding_enable_ab_test: bool = False
+    embedding_ab_model: str = ""
+    embedding_ab_similarity_threshold: float = 0.65
+    embedding_ab_top_k: int = 30
+    embedding_timeout_warn_ms: int = 3000
+    embedding_memory_warn_mb: float = 2048.0
+    embedding_zero_recall_warn_days: int = 3
 
     # --- GitHub Issue tracking ---
     github_token: str = ""
@@ -249,6 +256,13 @@ class Settings:
             embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
             embedding_top_k=_parse_int(os.getenv("EMBEDDING_TOP_K"), 30),
             embedding_similarity_threshold=_parse_float(os.getenv("EMBEDDING_SIMILARITY_THRESHOLD"), 0.68),
+            embedding_enable_ab_test=_parse_bool(os.getenv("EMBEDDING_ENABLE_AB_TEST"), False),
+            embedding_ab_model=os.getenv("EMBEDDING_AB_MODEL", "").strip(),
+            embedding_ab_similarity_threshold=_parse_float(os.getenv("EMBEDDING_AB_SIMILARITY_THRESHOLD"), 0.65),
+            embedding_ab_top_k=_parse_int(os.getenv("EMBEDDING_AB_TOP_K"), 30),
+            embedding_timeout_warn_ms=_parse_int(os.getenv("EMBEDDING_TIMEOUT_WARN_MS"), 3000),
+            embedding_memory_warn_mb=_parse_float(os.getenv("EMBEDDING_MEMORY_WARN_MB"), 2048.0),
+            embedding_zero_recall_warn_days=_parse_int(os.getenv("EMBEDDING_ZERO_RECALL_WARN_DAYS"), 3),
             # --- Stealth / anti-detection ---
             stealth_enabled=_parse_bool(os.getenv("STEALTH_ENABLED"), True),
             stealth_human_behavior=_parse_bool(os.getenv("STEALTH_HUMAN_BEHAVIOR"), True),

@@ -1,135 +1,106 @@
-# 快速啟用 Semantic Filter
+# QUICK_START_SEMANTIC_FILTER
 
-## 🚀 一鍵啟用
+## 1) 啟用 BGE-M3 語意召回
 
-### 1. 安裝依賴
-
-```bash
-cd /home/xcloud/project/webpccscrape
-source venv/bin/activate
-pip install sentence-transformers scikit-learn
-```
-
-### 2. 啟用 Embedding Recall
-
-編輯 `.env` 或 `local.settings.json`，新增：
+在 `.env`（或對應部署環境變數）設定：
 
 ```bash
-# 啟用 embedding 語意召回
 ENABLE_EMBEDDING_RECALL=true
-
-# 可選配置（使用預設值即可）
 EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_TOP_K=30
 EMBEDDING_SIMILARITY_THRESHOLD=0.68
 ```
 
-### 3. 測試執行
+可選參數（A/B 與監控）：
 
 ```bash
-# 完整測試（推薦）
-python test_hybrid_filter.py
-
-# 本地執行pipeline（不發送通知）
-python run_local.py --no-send --preview-html ./output/preview.html
-
-# 正常執行（會發送通知）
-python run_local.py
+EMBEDDING_ENABLE_AB_TEST=false
+EMBEDDING_AB_MODEL=
+EMBEDDING_AB_SIMILARITY_THRESHOLD=0.65
+EMBEDDING_AB_TOP_K=30
+EMBEDDING_TIMEOUT_WARN_MS=3000
+EMBEDDING_MEMORY_WARN_MB=2048
+EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 ```
 
----
-
-## 📊 驗證結果
-
-執行 `test_hybrid_filter.py` 應該看到：
-
-```
-================================================================================
-🎯 Hybrid Filter 總召回率: 4/4 = 100.0%
-================================================================================
-```
-
----
-
-## ⚙️ 配置說明
-
-| 參數 | 預設值 | 說明 |
-|------|--------|------|
-| `ENABLE_EMBEDDING_RECALL` | `false` | 是否啟用 embedding 語意召回 |
-| `EMBEDDING_MODEL` | `BAAI/bge-m3` | Sentence-transformers 模型名稱 |
-| `EMBEDDING_TOP_K` | `30` | 召回前 K 個候選 |
-| `EMBEDDING_SIMILARITY_THRESHOLD` | `0.68` | 最低相似度閾值（0-1） |
-
----
-
-## 🔧 調整召回率/精確率
-
-### 提高召回率（減少漏抓）
-
-降低相似度閾值：
+## 2) 安裝依賴
 
 ```bash
-EMBEDDING_SIMILARITY_THRESHOLD=0.5  # 降低到 0.5
+cd /home/xcloud/project/webpccscrape
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 提高精確率（減少誤報）
-
-提高相似度閾值：
+## 3) 先跑本地驗證（不發通知）
 
 ```bash
-EMBEDDING_SIMILARITY_THRESHOLD=0.7  # 提高到 0.7
+python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
 ```
 
----
+建議檢查 `logs/cron.log` 事件：
 
-## 🐛 問題排查
+- `keyword_screen_distribution`
+- `embedding_recall_pipeline_step`
+- `embedding_recall_done`
+- `local_run_finished`
 
-### Q1: ImportError: No module named 'sentence_transformers'
+## 4) 測試與回歸
 
 ```bash
-pip install sentence-transformers scikit-learn
+pytest -q test_hybrid_filter.py test_phase1_phase2.py
 ```
 
-### Q2: Embedding 模型下載很慢
+## 5) Threshold 調整流程
 
-首次執行會自動下載 50MB 模型，之後會快取。可預先下載：
+只在下列候選值比較：
+
+- `0.65`
+- `0.68`（基準）
+- `0.70`
+
+調整順序：
+
+1. 先用 `0.68` 蒐集 3-7 天生產 log。
+2. 比較命中率、誤判率、boundary -> recall 轉換率。
+3. 測試集通過率不得下降。
+4. 若誤判與漏判拉扯，維持 `0.68`。
+
+## 6) A/B Sidecar（不影響正式通知）
+
+開啟：
 
 ```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
+EMBEDDING_ENABLE_AB_TEST=true
+EMBEDDING_AB_MODEL=BAAI/bge-m3
+EMBEDDING_AB_SIMILARITY_THRESHOLD=0.65
 ```
 
-### Q3: 想要關閉 Embedding 功能
+觀測事件：
+
+- `embedding_ab_dataset_row`
+- `embedding_ab_row`
+- `embedding_ab_summary`
+
+固定比對欄位：
+
+- `uid`
+- `title`
+- `keyword_confidence`
+- `embedding_similarity`
+- `embedding_best_category`
+- `decision_source`
+- `model_name`
+- `threshold`
+
+## 7) 每日摘要
 
 ```bash
-ENABLE_EMBEDDING_RECALL=false
+python summarize_cron_log.py --log-file logs/cron.log --days 7
 ```
 
-系統會自動回退到純 Keyword Filter。
+關鍵警示：
 
----
-
-## 📈 效能影響
-
-| 階段 | 時間 | 說明 |
-|------|------|------|
-| Keyword Filter | <1ms | 幾乎無影響 |
-| Embedding Encode | 1-2s | 首次載入模型（之後快取） |
-| Similarity Calc | 20-50ms/筆 | CPU 環境，批次處理更快 |
-
-**總體影響**: 每日執行時間增加約 2-3 秒（可接受）
-
----
-
-## ✅ 驗證清單
-
-- [ ] 安裝依賴 `sentence-transformers` 和 `scikit-learn`
-- [ ] 設定 `ENABLE_EMBEDDING_RECALL=true`
-- [ ] 執行 `python test_hybrid_filter.py` 驗證
-- [ ] 檢查召回率是否達到 100%
-- [ ] 執行 `python run_local.py --no-send --preview-html ./output/preview.html`
-- [ ] 檢查 preview.html 中的標案是否符合預期
-- [ ] 正式啟用前，先觀察 1-2 天的結果
-
----
-
-**需要協助？** 查看 `SEMANTIC_FILTER_SUMMARY.md` 取得完整文件。
+- `embedding_model_load_failed`
+- `embedding_duration_warning`
+- `embedding_memory_warning`
+- `zero_recall_streak >= EMBEDDING_ZERO_RECALL_WARN_DAYS`

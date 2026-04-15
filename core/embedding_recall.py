@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import resource
+import time
 from typing import Any
 
 import numpy as np
@@ -13,6 +16,13 @@ import numpy as np
 from core.models import BidRecord
 
 logger = logging.getLogger("bid-monitor.embedding")
+
+
+def _process_memory_mb() -> float:
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if os.name == "posix" and "darwin" in os.sys.platform:
+        return usage / (1024 * 1024)
+    return usage / 1024
 
 
 class EmbeddingRecaller:
@@ -43,13 +53,19 @@ class EmbeddingRecaller:
         """延遲載入模型（避免 import 時就載入）"""
         if self.model is not None:
             return
-        
+
+        start = time.perf_counter()
         try:
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer(self.model_name)
             self.log.info(
                 "embedding_model_loaded",
-                extra={"model": self.model_name}
+                extra={
+                    "step_name": "embedding_model_load",
+                    "model_name": self.model_name,
+                    "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+                    "memory_mb": round(_process_memory_mb(), 2),
+                },
             )
         except ImportError:
             raise ImportError(
@@ -57,7 +73,16 @@ class EmbeddingRecaller:
                 "Run: pip install sentence-transformers"
             )
         except Exception as exc:
-            self.log.error("embedding_model_load_failed", extra={"error": str(exc)})
+            self.log.error(
+                "embedding_model_load_failed",
+                extra={
+                    "step_name": "embedding_model_load",
+                    "model_name": self.model_name,
+                    "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+                    "memory_mb": round(_process_memory_mb(), 2),
+                    "error": str(exc),
+                },
+            )
             raise
     
     def _build_text(self, record: BidRecord) -> str:
@@ -72,16 +97,29 @@ class EmbeddingRecaller:
     def encode_bids(self, records: list[BidRecord]) -> np.ndarray:
         """將標案轉為 embedding vectors"""
         self._ensure_model_loaded()
+        start = time.perf_counter()
         texts = [self._build_text(r) for r in records]
         embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        self.log.info(
+            "embedding_candidates_encoded",
+            extra={
+                "step_name": "embedding_candidate_encode",
+                "model_name": self.model_name,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+                "candidate_count": len(records),
+                "result_count": len(embeddings),
+                "memory_mb": round(_process_memory_mb(), 2),
+            },
+        )
         return embeddings
     
     def encode_category_descriptions(self, category_texts: list[str]) -> np.ndarray:
         """將類別描述轉為 embedding vectors（cached）"""
         if self._category_embeddings is not None:
             return self._category_embeddings
-        
+
         self._ensure_model_loaded()
+        start = time.perf_counter()
         self._category_embeddings = self.model.encode(
             category_texts,
             convert_to_numpy=True,
@@ -89,7 +127,14 @@ class EmbeddingRecaller:
         )
         self.log.info(
             "category_embeddings_encoded",
-            extra={"count": len(category_texts)}
+            extra={
+                "step_name": "embedding_category_encode",
+                "model_name": self.model_name,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+                "candidate_count": len(category_texts),
+                "result_count": len(self._category_embeddings),
+                "memory_mb": round(_process_memory_mb(), 2),
+            },
         )
         return self._category_embeddings
     
@@ -119,8 +164,20 @@ class EmbeddingRecaller:
             category_embeddings = self.encode_category_descriptions(category_texts)
             
             # 計算 cosine similarity
+            similarity_start = time.perf_counter()
             from sklearn.metrics.pairwise import cosine_similarity
             scores = cosine_similarity(candidate_embeddings, category_embeddings)
+            self.log.info(
+                "embedding_similarity_computed",
+                extra={
+                    "step_name": "embedding_similarity",
+                    "model_name": self.model_name,
+                    "duration_ms": round((time.perf_counter() - similarity_start) * 1000, 2),
+                    "candidate_count": len(candidates),
+                    "result_count": int(scores.shape[0]),
+                    "memory_mb": round(_process_memory_mb(), 2),
+                },
+            )
             
             # 每個候選取與所有類別的最高相似度
             max_scores = scores.max(axis=1)
@@ -157,17 +214,34 @@ class EmbeddingRecaller:
             self.log.info(
                 "embedding_recall_done",
                 extra={
+                    "step_name": "embedding_recall_summary",
                     "candidates": len(candidates),
+                    "candidate_count": len(candidates),
                     "recalled": len(result),
+                    "result_count": len(result),
                     "threshold": self.similarity_threshold,
                     "top_k": self.top_k,
+                    "model_name": self.model_name,
+                    "memory_mb": round(_process_memory_mb(), 2),
                 }
             )
             
             return result
             
         except Exception as exc:
-            self.log.error("embedding_recall_failed", extra={"error": str(exc)})
+            self.log.error(
+                "embedding_recall_failed",
+                extra={
+                    "step_name": "embedding_recall_summary",
+                    "candidate_count": len(candidates),
+                    "result_count": len(candidates),
+                    "threshold": self.similarity_threshold,
+                    "top_k": self.top_k,
+                    "model_name": self.model_name,
+                    "memory_mb": round(_process_memory_mb(), 2),
+                    "error": str(exc),
+                },
+            )
             # Graceful fallback: 返回原始候選集
             return candidates
 

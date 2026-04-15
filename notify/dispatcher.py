@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from core.config import Settings
-from notify.email_acs import send_email_via_acs
-from notify.email_smtp import send_email_via_smtp
 
 
 def send_email(settings: Settings, subject: str, html_content: str, logger: Any) -> str:
@@ -14,6 +12,8 @@ def send_email(settings: Settings, subject: str, html_content: str, logger: Any)
 
     if settings.has_acs:
         try:
+            from notify.email_acs import send_email_via_acs
+
             send_email_via_acs(
                 connection_string=settings.acs_connection_string,
                 sender=settings.acs_email_sender,
@@ -27,6 +27,8 @@ def send_email(settings: Settings, subject: str, html_content: str, logger: Any)
             logger.exception("acs_send_failed_try_smtp", extra={"error": str(exc)})
 
     if settings.has_smtp:
+        from notify.email_smtp import send_email_via_smtp
+
         send_email_via_smtp(
             host=settings.smtp_host,
             port=settings.smtp_port,

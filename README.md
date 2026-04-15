@@ -1,20 +1,12 @@
 # Azure 教育資訊標案自動監控系統
 
 ## 1. 專案目的
-<<<<<<< ours
-<<<<<<< ours
-本專案會每天定時抓取多個來源的標案資料，篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
+本專案每天定時抓取多個來源的標案資料，篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
 
 **資料來源（多層容錯）**：
-1. **台灣採購公報**（taiwanbuying）— 使用 Playwright + Stealth 抓取
-2. **政府電子採購網**（gov.pcc）— 使用 Playwright + Stealth 抓取列表頁
-3. **開放資料 API**（https://pcc-api.openfun.app）— 作為補充來源，資料由行政院公共工程委員會「政府電子採購網」彙整，API 開放 CORS
-=======
-本專案預設每天定時透過 `https://pcc-api.openfun.app` API 擷取標案資料（聚合台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
->>>>>>> theirs
-=======
-本專案預設每天定時透過 `https://pcc-api.openfun.app` API 擷取標案資料（聚合台灣採購公報、政府電子採購相關公開查詢頁），篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
->>>>>>> theirs
+1. **台灣採購公報**（taiwanbuying）— Playwright + Stealth 抓取
+2. **政府電子採購網**（gov.pcc）— Playwright + Stealth 抓取列表頁
+3. **開放資料 API**（https://pcc-api.openfun.app）— 結構化補充來源
 
 **郵件內容包含**：
 - 標案標題、機關名稱、截止投標日期
@@ -166,8 +158,45 @@ SMTP_FROM=your@email.com
 EMAIL_TO=收件人1,收件人2
 ```
 
----
+### 6.3 BGE-M3 生產設定與每日巡檢
+
+`.env` 建議至少設定：
+
+```bash
+ENABLE_EMBEDDING_RECALL=true
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_TOP_K=30
+EMBEDDING_SIMILARITY_THRESHOLD=0.68
+
+# 可選：旁路 A/B（只寫 log，不影響正式通知）
+EMBEDDING_ENABLE_AB_TEST=false
+EMBEDDING_AB_MODEL=
+EMBEDDING_AB_SIMILARITY_THRESHOLD=0.65
+EMBEDDING_AB_TOP_K=30
+
+# 可選：效能告警門檻
+EMBEDDING_TIMEOUT_WARN_MS=3000
+EMBEDDING_MEMORY_WARN_MB=2048
+EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 ```
+
+每日巡檢（`logs/cron.log`）重點事件：
+- `local_run_finished`：`crawled_count/filtered_count/deduped_count/new_count/source_success_count/source_failed_count`
+- `keyword_screen_distribution`：`high_confidence/boundary/included_total`
+- `embedding_recall_pipeline_step`：`duration_ms/memory_mb/model_name/threshold/top_k`
+- `embedding_recall_done`：`candidate_count/recalled/result_count`
+- `embedding_duration_warning`、`embedding_memory_warning`、`embedding_model_load_failed`
+
+每日摘要工具：
+
+```bash
+python summarize_cron_log.py --log-file logs/cron.log --days 7
+```
+
+若需要旁路 A/B 比較，查看：
+- `embedding_ab_dataset_row`（統一欄位：`uid/title/keyword_confidence/embedding_similarity/embedding_best_category/decision_source/model_name/threshold`）
+- `embedding_ab_row`
+- `embedding_ab_summary`
 
 ## 6. Azure 部署方式
 ### 6.1 需要工具
@@ -209,6 +238,8 @@ func azure functionapp publish <functionAppName>
   - SMTP：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`
   - 收件人：`EMAIL_TO`
 - Playwright：`ENABLE_PLAYWRIGHT`
+- Embedding：`ENABLE_EMBEDDING_RECALL`、`EMBEDDING_MODEL`、`EMBEDDING_TOP_K`、`EMBEDDING_SIMILARITY_THRESHOLD`
+- Embedding A/B：`EMBEDDING_ENABLE_AB_TEST`、`EMBEDDING_AB_MODEL`、`EMBEDDING_AB_SIMILARITY_THRESHOLD`、`EMBEDDING_AB_TOP_K`
 
 ## 9. 常見故障排除
 1. 抓不到資料
@@ -347,4 +378,3 @@ g0v              ⚠️ 無資料   (0 筆)
   - 如仍失敗，請參考 `STEALTH_MIGRATION_COMPLETE.md` 或聯絡維護者
 
 詳細請見 `local.settings.json.example`。
-

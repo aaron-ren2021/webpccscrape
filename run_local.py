@@ -59,7 +59,24 @@ def main() -> int:
         logger=logger,
         persist_state=not args.no_persist_state,
     )
-    logger.info("local_run_finished", extra={"result": result.to_dict()})
+    result_dict = result.to_dict()
+    source_success = sum(1 for s in result.source_status if s.success)
+    source_failed = len(result.source_status) - source_success
+    logger.info(
+        "local_run_finished",
+        extra={
+            "result": result_dict,
+            "crawled_count": result.crawled_count,
+            "filtered_count": result.filtered_count,
+            "deduped_count": result.deduped_count,
+            "new_count": result.new_count,
+            "notification_sent": result.notification_sent,
+            "notification_backend": result.notification_backend,
+            "error_count": len(result.errors),
+            "source_success_count": source_success,
+            "source_failed_count": source_failed,
+        },
+    )
     return 0
 
 

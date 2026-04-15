@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from core.models import BidRecord
 from core.filters import filter_bids, has_theme_match
 from core.embedding_recall import recall_bids_with_embedding
@@ -171,6 +173,12 @@ def print_section_header(title: str):
     print("\n" + "=" * 80)
     print(f"  {title}")
     print("=" * 80)
+
+
+@pytest.fixture
+def keyword_filtered() -> list[BidRecord]:
+    """提供 Embedding 測試用的 keyword 篩選候選。"""
+    return filter_bids(create_comprehensive_test_bids())
 
 
 def test_keyword_filter():
