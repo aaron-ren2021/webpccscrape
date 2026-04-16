@@ -5,7 +5,15 @@
 - 執行入口：`run_local.py`
 - 排程：`30 8 * * 1-5`（Asia/Taipei，每週一到五 08:30）
 - Log：`logs/cron.log`
-- Pipeline：Keyword Screen + Boundary Embedding Recall（BGE-M3）
+- Pipeline：Core Keywords + Support Context + Boundary Embedding Recall（BGE-M3）
+
+## 目前規則重點
+
+- Keyword filter 已改成 `核心詞 / 輔助詞` 雙層
+- 只有核心詞可直接構成 IT 主題命中
+- 輔助詞如 `建置`、`整合`、`開發`、`管理`、`平台`、`系統` 不再單獨算分
+- 輔助詞必須搭配核心詞或明確 IT 場景才會形成 boundary / high confidence
+- 英文縮寫改為詞邊界比對，避免 `iPad Air` 這類字串誤中 `AI`
 
 ## 目前建議設定
 
@@ -66,7 +74,7 @@ EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 - 基準值維持 `0.68`
 - 候選值只比較 `0.65 / 0.68 / 0.70`
 - 測試集通過率不得下降
-- 生產誤判率下降優先
+- 生產誤判率下降優先，尤其是非 IT 的教學器材、交流行政、消費型硬體
 - 誤判/漏判拉扯時，維持現值 `0.68`
 
 ## 快速驗證命令
@@ -74,7 +82,7 @@ EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 ```bash
 python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
 python summarize_cron_log.py --log-file logs/cron.log --days 7
-pytest -q test_hybrid_filter.py test_phase1_phase2.py
+pytest -q tests/test_filters.py test_exclude_filter.py
 ```
 
 ## 已知風險

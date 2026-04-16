@@ -177,3 +177,16 @@ if actual_pass == expected_pass:
     print(f"\n✓ 測試通過！預期通過 {expected_pass} 筆，實際通過 {actual_pass} 筆")
 else:
     print(f"\n✗ 測試失敗！預期通過 {expected_pass} 筆，實際通過 {actual_pass} 筆")
+
+
+def test_exclude_keywords_block_non_it_bids() -> None:
+    for bid in exclude_test_cases:
+        assert has_theme_match(bid.title, bid.summary, bid.category) is False, bid.title
+
+
+def test_valid_it_cases_still_pass_filter() -> None:
+    filtered = filter_bids(exclude_test_cases + valid_test_cases)
+    filtered_titles = {bid.title for bid in filtered}
+
+    for bid in valid_test_cases:
+        assert bid.title in filtered_titles, bid.title
