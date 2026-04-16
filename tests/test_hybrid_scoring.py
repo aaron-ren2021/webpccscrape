@@ -37,6 +37,9 @@ def test_hybrid_screening_separates_high_boundary_and_excluded() -> None:
     assert boundary[0].metadata["filter_source"] == "keyword_boundary"
     assert high_confidence[0].metadata["keyword_confidence"] == "high_confidence"
     assert boundary[0].metadata["keyword_confidence"] == "boundary"
+    assert high_confidence[0].metadata["business_bucket"] == "high_confidence"
+    assert boundary[0].metadata["business_bucket"] == "boundary_for_semantic"
+    assert records[2].metadata["business_bucket"] == "excluded"
 
 
 def test_filter_bids_keeps_boundary_cases_for_embedding() -> None:
