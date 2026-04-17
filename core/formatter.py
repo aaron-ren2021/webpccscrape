@@ -8,6 +8,9 @@ from typing import Optional
 from core.filters import count_by_unit_type
 from core.models import BidRecord
 
+# Constants for bid bond free values
+_BOND_FREE_VALUES: frozenset[str] = frozenset({"0", "無", "無提供", "none", ""})
+
 
 def render_email_subject(prefix: str, run_date: date, count: int, earliest_deadline: Optional[date] = None) -> str:
     """Render email subject with optional earliest deadline."""
@@ -34,17 +37,9 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     ]
     
     # Find earliest deadline
-    earliest_deadline = None
-    for record in records:
-        if record.bid_deadline:
-            try:
-                # Try to parse deadline - could be "115/04/27 17:00" or similar
-                deadline_str = record.bid_deadline.strip()
-                if deadline_str and deadline_str != "無提供":
-                    earliest_deadline = deadline_str
-                    break
-            except Exception:
-                pass
+    deadlines = [r.bid_deadline.strip() for r in records 
+                 if r.bid_deadline and r.bid_deadline.strip() not in ("", "無提供")]
+    earliest_deadline = min(deadlines) if deadlines else None
 
     unit_summary = "、".join(f"{escape(k)}: {v}" for k, v in sorted(unit_counts.items())) or "無"
     tag_summary = "、".join(f"{escape(tag)}({count})" for tag, count in tag_counter.most_common()) or "無"
@@ -161,7 +156,7 @@ def _render_card(index: int, record: BidRecord) -> str:
     
     # Bid bond - show "需繳納" or "免繳納"
     bid_bond_raw = (record.bid_bond or "").strip()
-    if not bid_bond_raw or bid_bond_raw == "0" or bid_bond_raw.lower() in ["無", "無提供", "none"]:
+    if bid_bond_raw.lower() in _BOND_FREE_VALUES:
         bid_bond = '<span class="field-value val-bond-free">免繳納</span>'
     else:
         bid_bond = '<span class="field-value val-bond-req">需繳納</span>'
@@ -181,7 +176,7 @@ def _render_card(index: int, record: BidRecord) -> str:
             tag_items.append(f'<span class="{tag_class}">{escape(tag)}</span>')
     
     # Add bid-bond-free as a tag if applicable
-    if not bid_bond_raw or bid_bond_raw == "0" or bid_bond_raw.lower() in ["無", "無提供", "none"]:
+    if bid_bond_raw.lower() in _BOND_FREE_VALUES:
         tag_items.append('<span class="tag-pill tag-free">免繳押標金</span>')
     
     tags_html = " ".join(tag_items) if tag_items else '<span class="field-value val-none">無標籤</span>'
