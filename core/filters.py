@@ -63,6 +63,13 @@ THEME_KEYWORDS = [
     "lightroom",
     "indesign",
     "after effects",
+    "ai設備",
+    "ai 伺服器",
+    "ai server",
+    "gpu 伺服器",
+    "gpu server",
+    "ai運算伺服器",
+    "ai運算設備",
     "機房",
 ]
 
