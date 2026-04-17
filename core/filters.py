@@ -54,6 +54,15 @@ THEME_KEYWORDS = [
     "資安",
     "軟體訂閱",
     "軟體",
+    "adobe",
+    "creative cloud",
+    "acrobat",
+    "photoshop",
+    "illustrator",
+    "premiere",
+    "lightroom",
+    "indesign",
+    "after effects",
     "機房",
 ]
 
