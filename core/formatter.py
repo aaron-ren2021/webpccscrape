@@ -20,13 +20,11 @@ def render_email_subject(prefix: str, run_date: date, count: int, earliest_deadl
     return base
 
 
-
-
 def render_email_html(records: list[BidRecord], run_date: date, high_amount_threshold: float) -> str:
-    """Render email HTML with grid-based card layout."""
+    """Render email HTML — Outlook compatible (table layout, inline styles only)."""
     unit_counts = count_by_unit_type(records)
     tag_counter: Counter[str] = Counter()
-    
+
     for record in records:
         tag_counter.update(record.tags)
 
@@ -35,9 +33,9 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         for record in records
         if record.amount_value is not None and record.amount_value >= high_amount_threshold
     ]
-    
+
     # Find earliest deadline
-    deadlines = [r.bid_deadline.strip() for r in records 
+    deadlines = [r.bid_deadline.strip() for r in records
                  if r.bid_deadline and r.bid_deadline.strip() not in ("", "無提供")]
     earliest_deadline = min(deadlines) if deadlines else None
 
@@ -51,7 +49,7 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     if not high_amount_summary:
         high_amount_summary = "無"
 
-    # Meta line with earliest deadline
+    # Meta line
     meta_text = f"查詢日期：{escape(run_date.isoformat())}"
     if earliest_deadline:
         meta_text += f" ｜最緊急截止 {escape(earliest_deadline)}"
@@ -64,164 +62,244 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ background: #f3f4f6; padding: 20px; font-family: 'Noto Sans TC', Arial, sans-serif; }}
-    .container {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; max-width: 860px; margin: 0 auto; }}
-    .email-header {{ border-bottom: 1.5px solid #d1d5db; padding-bottom: 14px; margin-bottom: 16px; }}
-    .email-header h2 {{ font-size: 18px; font-weight: 600; color: #111827; margin-bottom: 4px; }}
-    .meta {{ font-size: 12px; color: #9ca3af; }}
-    .summary {{ background: #f9fafb; border-left: 3px solid #3b82f6; border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 20px; display: grid; gap: 5px; }}
-    .summary div {{ font-size: 13px; color: #374151; }}
-    .summary strong {{ font-weight: 600; }}
-    .bid-card {{ border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 10px; overflow: hidden; }}
-    .card-head {{ display: flex; align-items: baseline; gap: 10px; padding: 10px 16px; background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }}
-    .card-num {{ font-size: 11px; font-weight: 600; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; }}
-    .card-title-text {{ font-size: 14px; font-weight: 600; color: #111827; line-height: 1.4; }}
-    .card-body {{ padding: 12px 16px; background: #fff; }}
-    .fields-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 20px; }}
-    .field {{ display: flex; flex-direction: column; gap: 3px; }}
-    .field-label {{ font-size: 11px; color: #9ca3af; display: flex; align-items: center; gap: 4px; }}
-    .field-label span {{ font-size: 13px; }}
-    .field-value {{ font-size: 13px; font-weight: 500; color: #1f2937; }}
-    .val-deadline {{ color: #a32d2d; font-weight: 600; }}
-    .val-amount {{ color: #27500a; font-weight: 600; }}
-    .val-bond-free {{ color: #27500a; }}
-    .val-bond-req {{ color: #6b7280; }}
-    .val-none {{ color: #d1d5db; font-weight: 400; }}
-    .tag-pill {{ display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-right: 3px; margin-top: 2px; }}
-    .tag-soft {{ background: #dcfce7; color: #166534; }}
-    .tag-ai {{ background: #fef3c7; color: #78350f; }}
-    .tag-hw {{ background: #dbeafe; color: #1e40af; }}
-    .tag-free {{ background: #dcfce7; color: #166534; }}
-    .tag-default {{ background: #f3f4f6; color: #6b7280; }}
-    .link-btn {{ display: inline-flex; align-items: center; gap: 4px; background: #dbeafe; color: #1e40af; padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; border: 1px solid #93c5fd; }}
-    .src-badge {{ font-size: 12px; color: #6b7280; }}
-    .footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #9ca3af; text-align: center; }}
-    @media (max-width: 600px) {{
-      body {{ padding: 8px; }}
-      .container {{ padding: 14px; }}
-      .fields-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-    }}
-  </style>
 </head>
-<body>
-<div class="container">
+<body style="margin:0;padding:20px;background:#f3f4f6;font-family:'Noto Sans TC',Arial,sans-serif;">
 
-  <div class="email-header">
-    <h2>📧 教育資訊標案每日監控</h2>
-    <div class="meta">{meta_text}</div>
-  </div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;max-width:1100px;">
+        <tr>
+          <td style="padding:24px;">
 
-  <div class="summary">
-    <div><strong>📊 今日新增：</strong>{len(records)} 筆</div>
-    <div><strong>🏫 單位類型：</strong>{unit_summary}</div>
-    <div><strong>🏷️ 主題標籤：</strong>{tag_summary}</div>
-    <div><strong>💰 高金額案件：</strong>{escape(high_amount_summary)}</div>
-  </div>
+            <!-- Header -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="padding-bottom:14px;border-bottom:1px solid #d1d5db;">
+                  <div style="font-size:18px;font-weight:600;color:#111827;margin-bottom:4px;">
+                    &#128231; 教育資訊標案每日監控
+                  </div>
+                  <div style="font-size:12px;color:#9ca3af;">{meta_text}</div>
+                </td>
+              </tr>
+            </table>
 
-  {cards}
+            <!-- Spacer -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td style="height:16px;"></td></tr>
+            </table>
 
-  <div class="footer">本郵件由標案監控系統自動寄出，請勿直接回覆。</div>
+            <!-- Summary -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="background:#f9fafb;border-left:3px solid #3b82f6;border-radius:0 8px 8px 0;">
+              <tr>
+                <td style="padding:12px 16px;">
+                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                    <strong>&#128202; 今日新增：</strong>{len(records)} 筆
+                  </div>
+                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                    <strong>&#127979; 單位類型：</strong>{unit_summary}
+                  </div>
+                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                    <strong>&#127991; 主題標籤：</strong>{tag_summary}
+                  </div>
+                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                    <strong>&#128176; 高金額案件：</strong>{escape(high_amount_summary)}
+                  </div>
+                </td>
+              </tr>
+            </table>
 
-</div>
+            <!-- Spacer -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td style="height:20px;"></td></tr>
+            </table>
+
+            <!-- Cards -->
+            {cards}
+
+            <!-- Footer -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="border-top:1px solid #e5e7eb;margin-top:20px;">
+              <tr>
+                <td style="padding-top:12px;font-size:11px;color:#9ca3af;text-align:center;">
+                  本郵件由標案監控系統自動寄出，請勿直接回覆。
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
 </body>
 </html>""".strip()
 
 
 def _render_card(index: int, record: BidRecord) -> str:
-    """Render a single bid card with grid layout."""
+    """Render a single bid card — Outlook compatible table layout with inline styles."""
     title = escape(record.title)
     org = escape(record.organization)
-    
+
     # Opening time
     bid_opening = escape(record.bid_opening_time) if record.bid_opening_time else "詳見連結"
-    
-    # Deadline - emphasized in red
+
+    # Deadline
     bid_deadline_raw = (record.bid_deadline or "").strip()
     if bid_deadline_raw and bid_deadline_raw != "無提供":
-        bid_deadline = f'<span class="field-value val-deadline">{escape(bid_deadline_raw)}</span>'
+        bid_deadline = (
+            f'<div style="font-size:13px;font-weight:600;color:#a32d2d;">'
+            f'{escape(bid_deadline_raw)}</div>'
+        )
     else:
-        bid_deadline = '<span class="field-value val-none">無提供</span>'
-    
-    # Budget amount - emphasized in green
+        bid_deadline = '<div style="font-size:13px;color:#d1d5db;">無提供</div>'
+
+    # Budget
     if record.budget_amount:
-        budget = f'<span class="field-value val-amount">{escape(record.budget_amount)}</span>'
+        budget = (
+            f'<div style="font-size:13px;font-weight:600;color:#27500a;">'
+            f'{escape(record.budget_amount)}</div>'
+        )
     elif record.amount_value is not None:
-        budget = f'<span class="field-value val-amount">{format_amount(record)}</span>'
+        budget = (
+            f'<div style="font-size:13px;font-weight:600;color:#27500a;">'
+            f'{format_amount(record)}</div>'
+        )
     elif record.amount_raw:
-        budget = f'<span class="field-value val-amount">{escape(record.amount_raw)}</span>'
+        budget = (
+            f'<div style="font-size:13px;font-weight:600;color:#27500a;">'
+            f'{escape(record.amount_raw)}</div>'
+        )
     else:
-        budget = '<span class="field-value val-none">詳見連結</span>'
-    
-    # Bid bond - show "需繳納" or "免繳納"
+        budget = '<div style="font-size:13px;color:#d1d5db;">詳見連結</div>'
+
+    # Bid bond
     bid_bond_raw = (record.bid_bond or "").strip()
     if bid_bond_raw.lower() in _BOND_FREE_VALUES:
-        bid_bond = '<span class="field-value val-bond-free">免繳納</span>'
+        bid_bond = '<div style="font-size:13px;color:#27500a;">免繳納</div>'
+        is_free = True
     else:
-        bid_bond = '<span class="field-value val-bond-req">需繳納</span>'
-    
-    # Tags - color coding by type
+        bid_bond = '<div style="font-size:13px;color:#6b7280;">需繳納</div>'
+        is_free = False
+
+    # Tags
     tag_items = []
     if record.tags:
         for tag in record.tags:
             if "軟體" in tag or "系統" in tag:
-                tag_class = "tag-pill tag-soft"
+                bg, fg = "#dcfce7", "#166534"
             elif "AI" in tag.upper() or "人工智慧" in tag:
-                tag_class = "tag-pill tag-ai"
+                bg, fg = "#fef3c7", "#78350f"
             elif "硬體" in tag or "設備" in tag:
-                tag_class = "tag-pill tag-hw"
+                bg, fg = "#dbeafe", "#1e40af"
             else:
-                tag_class = "tag-pill tag-default"
-            tag_items.append(f'<span class="{tag_class}">{escape(tag)}</span>')
-    
-    # Add bid-bond-free as a tag if applicable
-    if bid_bond_raw.lower() in _BOND_FREE_VALUES:
-        tag_items.append('<span class="tag-pill tag-free">免繳押標金</span>')
-    
-    tags_html = " ".join(tag_items) if tag_items else '<span class="field-value val-none">無標籤</span>'
-    
-    # Link button
+                bg, fg = "#f3f4f6", "#6b7280"
+            tag_items.append(
+                f'<span style="display:inline-block;padding:2px 7px;border-radius:4px;'
+                f'font-size:11px;font-weight:500;margin-right:3px;'
+                f'background:{bg};color:{fg};">{escape(tag)}</span>'
+            )
+    if is_free:
+        tag_items.append(
+            '<span style="display:inline-block;padding:2px 7px;border-radius:4px;'
+            'font-size:11px;font-weight:500;margin-right:3px;'
+            'background:#dcfce7;color:#166534;">免繳押標金</span>'
+        )
+    tags_html = (
+        "".join(tag_items)
+        if tag_items
+        else '<span style="font-size:13px;color:#d1d5db;">無標籤</span>'
+    )
+
+    # Link
     link = escape(record.url or "")
     if link:
-        link_html = f'<a class="link-btn" href="{link}" target="_blank" rel="noreferrer">📄 查看詳情</a>'
+        link_html = (
+            f'<a href="{link}" target="_blank" rel="noreferrer"'
+            f' style="display:inline-block;padding:3px 10px;border-radius:4px;'
+            f'font-size:11px;text-decoration:none;'
+            f'background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;">'
+            f'&#128196; 查看詳情</a>'
+        )
     else:
-        link_html = '<span class="field-value val-none">無連結</span>'
-    
+        link_html = '<span style="font-size:13px;color:#d1d5db;">無連結</span>'
+
     # Source
     source_text = record.source
     if record.backup_source:
         source_text = f"{record.source}(備份)"
-    
-    # Map source to display name
-    source_display = source_text
     if source_text.lower() == "gov_pcc":
         source_display = "gov_pcc"
     elif "g0v" in source_text.lower():
         source_display = "g0v API"
     elif "taiwanbuying" in source_text.lower():
         source_display = "taiwanbuying"
-    
-    source_html = f'<span class="src-badge">{escape(source_display)}</span>'
-    
-    return f"""  <div class="bid-card">
-    <div class="card-head">
-      <span class="card-num">#{index}</span>
-      <span class="card-title-text">{title}</span>
-    </div>
-    <div class="card-body">
-      <div class="fields-grid">
-        <div class="field"><span class="field-label"><span>🏫</span> 機關</span><span class="field-value">{org}</span></div>
-        <div class="field"><span class="field-label"><span>🕐</span> 開標時間</span><span class="field-value">{bid_opening}</span></div>
-        <div class="field"><span class="field-label"><span>⏰</span> 截止投標</span>{bid_deadline}</div>
-        <div class="field"><span class="field-label"><span>💰</span> 預算金額</span>{budget}</div>
-        <div class="field"><span class="field-label"><span>💳</span> 押標金</span>{bid_bond}</div>
-        <div class="field"><span class="field-label"><span>🏷️</span> 標籤</span><span class="field-value">{tags_html}</span></div>
-        <div class="field"><span class="field-label"><span>🔗</span> 連結</span>{link_html}</div>
-        <div class="field"><span class="field-label"><span>📌</span> 來源</span>{source_html}</div>
-      </div>
-    </div>
-  </div>"""
+    else:
+        source_display = source_text
+
+    # Shared cell styles
+    td_style = 'style="width:25%;padding:6px 20px 14px 0;vertical-align:top;"'
+    td_last = 'style="width:25%;padding:6px 0 14px 0;vertical-align:top;"'
+    label_style = 'style="font-size:11px;color:#9ca3af;margin-bottom:3px;"'
+    value_style = 'style="font-size:13px;font-weight:500;color:#1f2937;"'
+
+    return f"""
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px;">
+    <tr>
+      <td colspan="4"
+          style="padding:10px 16px;background:#f3f4f6;
+                 border-bottom:1px solid #e5e7eb;
+                 border-radius:10px 10px 0 0;">
+        <span style="display:inline-block;font-size:11px;font-weight:600;
+                     background:#dbeafe;color:#1e40af;
+                     padding:2px 8px;border-radius:4px;margin-right:8px;">
+          #{index}
+        </span>
+        <span style="font-size:14px;font-weight:600;color:#111827;">{title}</span>
+      </td>
+    </tr>
+    <tr style="background:#ffffff;">
+      <td {td_style}>
+        <div {label_style}>&#127979; 機關</div>
+        <div {value_style}>{org}</div>
+      </td>
+      <td {td_style}>
+        <div {label_style}>&#128336; 開標時間</div>
+        <div {value_style}>{bid_opening}</div>
+      </td>
+      <td {td_style}>
+        <div {label_style}>&#9200; 截止投標</div>
+        {bid_deadline}
+      </td>
+      <td {td_last}>
+        <div {label_style}>&#128176; 預算金額</div>
+        {budget}
+      </td>
+    </tr>
+    <tr style="background:#ffffff;">
+      <td {td_style}>
+        <div {label_style}>&#128179; 押標金</div>
+        {bid_bond}
+      </td>
+      <td {td_style}>
+        <div {label_style}>&#127991; 標籤</div>
+        <div style="font-size:13px;">{tags_html}</div>
+      </td>
+      <td {td_style}>
+        <div {label_style}>&#128279; 連結</div>
+        {link_html}
+      </td>
+      <td {td_last}>
+        <div {label_style}>&#128204; 來源</div>
+        <div style="font-size:12px;color:#6b7280;">{escape(source_display)}</div>
+      </td>
+    </tr>
+  </table>"""
 
 
 def format_amount(record: BidRecord) -> str:
