@@ -97,6 +97,11 @@ EXCLUDE_THEME_KEYWORDS = [
     "手術器械",
     "導引鞘",
     "導管",
+    # 醫療服務
+    "抽血站",
+    "檢驗站",
+    "診療服務",
+    "門診服務",
     # 實驗室儀器
     "質譜儀",
     "光譜儀",
@@ -121,13 +126,33 @@ EXCLUDE_THEME_KEYWORDS = [
 STABLE_THEME_KEYWORDS = [
     "資訊設備",
     "資訊服務",
+    "資訊安全",
     "電腦設備",
     "筆記型電腦",
+    "平板電腦",
+    "平板",
+    "周邊設備",
+    "學習載具",
     "伺服器",
+    "電腦主機",
+    "主機",
+    "mac",
+    "imac",
+    "macbook",
     "網路設備",
     "無線網路",
+    "交換器",
+    "路由器",
     "基地台",
     "access point",
+    "負載平衡",
+    "顯示器",
+    "觸控",
+    "電子白板",
+    "儲存",
+    "儲存系統",
+    "磁碟陣列",
+    "nvme",
     "雲端",
     "資安",
     "軟體訂閱",
@@ -217,6 +242,7 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     主題匹配邏輯（兩階段）：
     1. 先檢查排除關鍵字（醫療、實驗室、量測設備） → 命中則排除
     2. 再檢查包含關鍵字（資訊設備相關） → 命中則保留
+       - 使用 STRICT（高相關）+ STABLE（穩定）+ BROAD（寬泛）三層關鍵字
     """
     text = f"{title} {summary} {category}".lower()
     
@@ -224,8 +250,9 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     if any(keyword.lower() in text for keyword in EXCLUDE_THEME_KEYWORDS):
         return False
     
-    # 第二階段：包含資訊設備關鍵字
-    return any(keyword.lower() in text for keyword in STABLE_THEME_KEYWORDS)
+    # 第二階段：包含資訊設備關鍵字（三層合併）
+    all_keywords = STRICT_THEME_KEYWORDS + STABLE_THEME_KEYWORDS + BROAD_THEME_KEYWORDS
+    return any(keyword.lower() in text for keyword in all_keywords)
 
 
 def infer_unit_type(org_name: str) -> str:
