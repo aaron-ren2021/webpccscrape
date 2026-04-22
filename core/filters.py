@@ -42,7 +42,83 @@ EDU_ORG_WHITELIST_KEYWORDS = [
     "醫學院",
 ]
 
-THEME_KEYWORDS = [
+# 第一層：嚴格過濾詞（只要命中即視為教育資訊標案高相關）
+STRICT_THEME_KEYWORDS = [
+    "校務系統",
+    "學務系統",
+    "防火牆",
+    "弱點掃描",
+    "滲透測試",
+    "fortigate",
+    "tenable",
+    "office 365",
+    "power bi",
+    "copilot 教育版",
+    "備份系統",
+    "虛擬化",
+    "gpu 伺服器",
+]
+
+# 第二層：寬詞（不直接放行，提供 embedding/標籤等後續流程使用）
+BROAD_THEME_KEYWORDS = [
+    "軟體",
+    "雲端",
+    "網路設備",
+    "資訊服務",
+    "機房",
+    "openai",
+]
+
+# 第三層：內部營運詞（僅供路由/商機分類，不作為是否放行依據）
+INTERNAL_BIZ_KEYWORDS = [
+    "標案投標",
+    "履約",
+    "驗收",
+    "發票對帳",
+    "標案監測",
+]
+
+# 排除關鍵字：非資訊設備案件（醫療、實驗室、量測儀器）
+EXCLUDE_THEME_KEYWORDS = [
+    # 醫療設備
+    "節律系統",
+    "心律調節器",
+    "超音波乳化",
+    "超音波掃描",
+    "超音波探頭",
+    "呼吸器",
+    "呼吸照護",
+    "麻醉機",
+    "腦波系統",
+    "心電圖",
+    "血壓計",
+    "血糖機",
+    "醫療耗材",
+    "手術器械",
+    "導引鞘",
+    "導管",
+    # 實驗室儀器
+    "質譜儀",
+    "光譜儀",
+    "色譜儀",
+    "顯微鏡",
+    "離心機",
+    "培養箱",
+    # 電子量測設備
+    "示波器",
+    "電錶",
+    "三用電錶",
+    "函數產生器",
+    "信號產生器",
+    "頻譜分析儀",
+    # 其他非資訊服務
+    "認證證書服務",
+    "認證服務",
+    "檢驗服務",
+]
+
+# 穩定版：保守放行詞（先維持上線穩定）
+STABLE_THEME_KEYWORDS = [
     "資訊設備",
     "資訊服務",
     "電腦設備",
@@ -50,19 +126,58 @@ THEME_KEYWORDS = [
     "伺服器",
     "網路設備",
     "無線網路",
+    "基地台",
+    "access point",
     "雲端",
     "資安",
     "軟體訂閱",
     "軟體",
     "機房",
+    # 系統類
+    "管理系統",
+    "管理平台",
+    "檔案管理",
+    # AI/運算類
+    "ai 運算",
+    "gpu 運算",
+    "運算平台",
+    # 新增 Adobe 相關
+    "adobe",
+    "acrobat",
+    "photoshop",
 ]
 
 THEME_TAG_MAP = {
-    "資安": ["資安", "防火牆", "弱點", "防毒", "零信任"],
-    "雲端": ["雲端", "cloud", "saas", "iaas", "paas"],
+    "資安": ["資安", "防火牆", "弱點", "防毒", "零信任", "fortigate", "tenable", "rms", "ims", "ad 漏洞", "災難復原"],
+    "雲端": ["雲端", "cloud", "saas", "iaas", "paas", "azure", "m365", "office 365", "onedrive", "teams", "outlook", "vm", "pve", "虛擬化"],
     "網路": ["網路", "無線", "交換器", "路由器", "wifi"],
-    "軟體": ["軟體", "授權", "訂閱", "系統"],
-    "機房": ["機房", "server room", "機櫃", "電力"],
+    "軟體": [
+        "軟體",
+        "授權",
+        "訂閱",
+        "系統",
+        "copilot",
+        "copilot studio",
+        "copilot 教育版",
+        "openai",
+        "a9 openai",
+        "adobe cct",
+        "adobe",      # 新增
+        "acrobat",    # 新增
+        "photoshop",  # 新增
+        "github enterprise server",
+        "power bi",
+        "fabric",
+        "m365 cowork",
+        "segma",
+        "向量資料庫",
+        "圖片解析",
+        "虛擬人像",
+        "雲端帳單",
+        "自動化申請表單",
+    ],
+    "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "jetson agx orin"],
+    "內部營運": INTERNAL_BIZ_KEYWORDS,
 }
 
 
@@ -98,8 +213,19 @@ def is_educational_org(org_name: str) -> bool:
 
 
 def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
+    """
+    主題匹配邏輯（兩階段）：
+    1. 先檢查排除關鍵字（醫療、實驗室、量測設備） → 命中則排除
+    2. 再檢查包含關鍵字（資訊設備相關） → 命中則保留
+    """
     text = f"{title} {summary} {category}".lower()
-    return any(keyword.lower() in text for keyword in THEME_KEYWORDS)
+    
+    # 第一階段：排除非資訊設備
+    if any(keyword.lower() in text for keyword in EXCLUDE_THEME_KEYWORDS):
+        return False
+    
+    # 第二階段：包含資訊設備關鍵字
+    return any(keyword.lower() in text for keyword in STABLE_THEME_KEYWORDS)
 
 
 def infer_unit_type(org_name: str) -> str:
