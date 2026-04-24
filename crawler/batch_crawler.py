@@ -18,11 +18,13 @@ from crawler.behavior.throttle import ThrottleConfig, ThrottleController
 from crawler.detection.detection_logger import (
     CrawlOutcome,
     DetectionLogger,
-    classify_outcome,
+    classify_outcome_with_page,
 )
+from crawler.detection.strategies import get_retry_strategy
 from crawler.identity_manager import IdentityManager
 from crawler.session.session_manager import SessionManager
 from crawler.stealth.browser_stealth import create_stealth_context
+from crawler.stealth.fingerprint_profiles import FingerprintProfile, apply_profile_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,9 @@ def batch_stealth_fetch(
     artifact_dir: str = "",
     throttle_config: Optional[ThrottleConfig] = None,
     proxy_list: Optional[list[str]] = None,
+    locale_pool: Optional[list[str]] = None,
+    timezone_pool: Optional[list[str]] = None,
+    align_locale_timezone_with_proxy: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     log: Any = None,
 ) -> BatchCrawlResult:
@@ -123,6 +128,8 @@ def batch_stealth_fetch(
         current_page: Optional[Page] = None
         current_domain: str = ""
         current_identity_id: str = ""
+        current_profile: Optional[FingerprintProfile] = None
+        behavior_intensity = "normal"
 
         try:
             for idx, url in enumerate(urls):
@@ -164,29 +171,40 @@ def batch_stealth_fetch(
                     if identity.proxy:
                         proxy_dict = {"server": identity.proxy}
 
+                    active_profile = apply_profile_overrides(
+                        identity.fingerprint,
+                        locale_pool=list(locale_pool or []),
+                        timezone_pool=list(timezone_pool or []),
+                        align_with_proxy=align_locale_timezone_with_proxy,
+                        proxy_server=identity.proxy or "",
+                    )
+
                     # Create new context with current identity
                     current_context, _ = create_stealth_context(
                         browser,
-                        profile=identity.fingerprint,
+                        profile=active_profile,
                         proxy=proxy_dict,
                         storage_state=storage_state,
                     )
                     current_page = current_context.new_page()
                     current_domain = domain
                     current_identity_id = identity.id
+                    current_profile = active_profile
 
                     log.info(
                         "batch_context_created",
                         extra={
                             "identity_id": identity.id,
                             "domain": domain,
-                            "platform": identity.fingerprint.platform,
+                            "platform": active_profile.platform,
                         },
                     )
 
                 # Throttle before request
                 if idx > 0:
                     throttle.wait_before_request()
+                    if behavior_intensity == "elevated":
+                        pre_navigation_delay()
                 else:
                     pre_navigation_delay()
 
@@ -213,14 +231,34 @@ def batch_stealth_fetch(
                             simulate_idle_reading(current_page)
                         else:
                             simulate_page_read(current_page)
+                        if behavior_intensity == "elevated":
+                            simulate_page_read(current_page)
                         html = current_page.content()  # Re-read after JS rendering
 
                 except PwTimeout:
                     timed_out = True
                 except Exception as exc:
                     log.warning("batch_fetch_error", extra={"url": url, "error": str(exc)})
-                    result.failed.append((url, f"error: {exc}"))
+                    det_logger.log_failure(
+                        page=current_page,
+                        html=html,
+                        url=url,
+                        outcome=CrawlOutcome.UNKNOWN_FAILURE,
+                        proxy=identity.proxy or "",
+                        user_agent=(current_profile.user_agent if current_profile else identity.fingerprint.user_agent),
+                        session_id=domain,
+                        error=str(exc),
+                        extra={
+                            "identity_id": identity.id,
+                            "batch_index": idx,
+                            "actions": ["backoff", "rotate_identity"],
+                            "human_behavior_intensity": "elevated",
+                        },
+                    )
+                    result.failed.append((url, f"unknown_failure: {exc}"))
                     identity_mgr.record_request(success=False)
+                    throttle.record_failure()
+                    behavior_intensity = "elevated"
 
                     # Context may be stale/crashed — close it so next iteration recreates
                     if current_context:
@@ -234,20 +272,34 @@ def batch_stealth_fetch(
 
                 # Classify outcome
                 selector_found = bool(current_page.query_selector(wait_selector)) if not timed_out else False
-                outcome = classify_outcome(
+                outcome = classify_outcome_with_page(
+                    page=current_page,
                     html=html,
                     expected_selector_found=selector_found,
                     timed_out=timed_out,
                     url=url,
                 )
 
-                det_logger.log_event(
+                strategy_plan = get_retry_strategy(
+                    outcome,
+                    1,
+                    context={"runner": "batch"},
+                )
+
+                det_logger.log_failure(
+                    page=current_page,
+                    html=html,
                     url=url,
                     outcome=outcome,
                     proxy=identity.proxy or "",
-                    user_agent=identity.fingerprint.user_agent,
+                    user_agent=(current_profile.user_agent if current_profile else identity.fingerprint.user_agent),
                     session_id=domain,
-                    extra={"identity_id": identity.id, "batch_index": idx},
+                    extra={
+                        "identity_id": identity.id,
+                        "batch_index": idx,
+                        "actions": list(strategy_plan.actions),
+                        "human_behavior_intensity": strategy_plan.human_behavior_intensity,
+                    },
                 )
 
                 # Handle outcome
@@ -255,6 +307,7 @@ def batch_stealth_fetch(
                     result.successful.append((url, html))
                     identity_mgr.record_request(success=True)
                     throttle.reset_failure_streak()
+                    behavior_intensity = "normal"
 
                     # Save session on success
                     if session_mgr and current_context:
@@ -272,14 +325,10 @@ def batch_stealth_fetch(
                         },
                     )
                 else:
-                    result.failed.append((url, outcome))
+                    result.failed.append((url, str(outcome)))
                     identity_mgr.record_request(success=False)
                     throttle.record_failure()  # Record for adaptive throttling
-
-                    # Capture artifacts
-                    det_logger.capture_screenshot(current_page, url, label=outcome)
-                    if html:
-                        det_logger.capture_html(html, url, label=outcome)
+                    behavior_intensity = strategy_plan.human_behavior_intensity
 
                     log.warning(
                         "batch_fetch_failed",
@@ -287,20 +336,15 @@ def batch_stealth_fetch(
                             "url": url,
                             "outcome": outcome,
                             "identity_id": identity.id,
+                            "actions": list(strategy_plan.actions),
                         },
                     )
 
-                    # 🔥 FAIL FAST + RESET: Terminal failures trigger immediate reset
-                    if outcome in (
-                        CrawlOutcome.CAPTCHA,
-                        CrawlOutcome.HARD_BLOCK,
-                        CrawlOutcome.ACCESS_DENIED,
-                        CrawlOutcome.CLOUDFLARE_CHALLENGE,
-                    ):
+                    if "rotate_identity" in strategy_plan.actions or "rotate_proxy" in strategy_plan.actions:
                         # Force identity rotation
                         identity_mgr.force_rotation()
-                        
-                        # Close context immediately (fail fast)
+
+                        # Close context immediately for identity reset
                         if current_context:
                             try:
                                 current_context.close()
@@ -308,31 +352,16 @@ def batch_stealth_fetch(
                                 pass
                             current_context = None
                             current_page = None
-                        
-                        # Short cooldown for probing; long cooldown for bulk
-                        cooldown = random.uniform(5, 15)
-                        log.warning(
-                            "fail_fast_reset",
-                            extra={
-                                "outcome": outcome,
-                                "cooldown_seconds": round(cooldown, 1),
-                                "message": "Terminal failure detected. Closing context and cooling down.",
-                            },
-                        )
-                        time.sleep(cooldown)
-                    
-                    # Recoverable failures: moderate cooldown
-                    elif outcome in (
-                        CrawlOutcome.RATE_LIMITED,
-                        CrawlOutcome.SOFT_BLOCK,
-                    ):
-                        # Moderate cooldown: 20-60 seconds
-                        cooldown = random.uniform(20, 60)
+
+                    if "backoff" in strategy_plan.actions and strategy_plan.cooldown_range:
+                        low, high = strategy_plan.cooldown_range
+                        cooldown = random.uniform(low, high)
                         log.info(
-                            "recoverable_failure_cooldown",
+                            "batch_failure_cooldown",
                             extra={
                                 "outcome": outcome,
                                 "cooldown_seconds": round(cooldown, 1),
+                                "actions": list(strategy_plan.actions),
                             },
                         )
                         time.sleep(cooldown)

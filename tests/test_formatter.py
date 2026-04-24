@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from core.formatter import _render_card
+from core.formatter import _render_card, find_earliest_deadline, render_email_subject
 from core.models import BidRecord
 
 
@@ -55,3 +55,26 @@ def test_render_card_g0v_unsafe_link_shows_backup_api_links() -> None:
     assert "來源 API" in html
     assert "機關 API" in html
     assert "資料連結暫不可用" in html
+
+
+def test_find_earliest_deadline_sorts_roc_and_returns_ce() -> None:
+    records = [
+        _make_record(bid_deadline="115/04/27 17:00"),
+        _make_record(bid_deadline="115/04/24"),
+        _make_record(bid_deadline="無提供"),
+    ]
+
+    earliest = find_earliest_deadline(records)
+
+    assert earliest == "2026-04-24"
+
+
+def test_render_email_subject_uses_deadline_text() -> None:
+    subject = render_email_subject(
+        prefix="[教育資訊標案監控]",
+        run_date=date(2026, 4, 24),
+        count=3,
+        earliest_deadline="2026-04-24",
+    )
+
+    assert subject == "[教育資訊標案監控] 2026-04-24 新增 3 筆｜最緊急截止 2026-04-24"

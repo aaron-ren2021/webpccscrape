@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, Optional
 
 
 @dataclass(slots=True)
@@ -266,12 +266,86 @@ _PROFILES: list[FingerprintProfile] = [
 ]
 
 
-def pick_profile(seed: Optional[int] = None) -> FingerprintProfile:
-    """Pick a random fingerprint profile. Optionally seed for reproducibility."""
-    if seed is not None:
-        rng = random.Random(seed)
-        return rng.choice(_PROFILES)
-    return random.choice(_PROFILES)
+def _normalize_languages(locale: str) -> list[str]:
+    base_lang = locale.split("-")[0] if "-" in locale else locale
+    languages = [locale]
+    if base_lang and base_lang != locale:
+        languages.append(base_lang)
+    if "en-US" not in languages:
+        languages.append("en-US")
+    if "en" not in languages:
+        languages.append("en")
+    return languages
+
+
+def _detect_proxy_locale_timezone(proxy_server: str) -> tuple[str, str] | None:
+    """Best-effort mapping hook for proxy geography -> locale/timezone consistency."""
+    normalized = proxy_server.lower()
+    mappings = [
+        (("taiwan", "taipei", ".tw"), ("zh-TW", "Asia/Taipei")),
+        (("japan", "tokyo", ".jp"), ("ja-JP", "Asia/Tokyo")),
+        (("singapore", ".sg"), ("en-SG", "Asia/Singapore")),
+        (("us", "usa", "america", ".us"), ("en-US", "America/Los_Angeles")),
+    ]
+    for keywords, locale_timezone in mappings:
+        if any(keyword in normalized for keyword in keywords):
+            return locale_timezone
+    return None
+
+
+def apply_profile_overrides(
+    profile: FingerprintProfile,
+    *,
+    locale_pool: Optional[list[str]] = None,
+    timezone_pool: Optional[list[str]] = None,
+    align_with_proxy: bool = False,
+    proxy_server: str = "",
+    rng: Any = random,
+) -> FingerprintProfile:
+    """Apply configurable locale/timezone overrides while keeping defaults unchanged."""
+    locale = profile.locale
+    timezone_id = profile.timezone_id
+
+    if locale_pool:
+        locale = rng.choice(locale_pool)
+    if timezone_pool:
+        timezone_id = rng.choice(timezone_pool)
+
+    if align_with_proxy and proxy_server:
+        mapped = _detect_proxy_locale_timezone(proxy_server)
+        if mapped:
+            locale, timezone_id = mapped
+
+    if locale == profile.locale and timezone_id == profile.timezone_id:
+        return profile
+
+    return replace(
+        profile,
+        locale=locale,
+        timezone_id=timezone_id,
+        languages=_normalize_languages(locale),
+    )
+
+
+def pick_profile(
+    seed: Optional[int] = None,
+    *,
+    locale_pool: Optional[list[str]] = None,
+    timezone_pool: Optional[list[str]] = None,
+    align_with_proxy: bool = False,
+    proxy_server: str = "",
+) -> FingerprintProfile:
+    """Pick a profile with optional locale/timezone pool overrides."""
+    rng = random.Random(seed) if seed is not None else random
+    base_profile = rng.choice(_PROFILES)
+    return apply_profile_overrides(
+        base_profile,
+        locale_pool=locale_pool,
+        timezone_pool=timezone_pool,
+        align_with_proxy=align_with_proxy,
+        proxy_server=proxy_server,
+        rng=rng,
+    )
 
 
 def add_viewport_jitter(profile: FingerprintProfile) -> tuple[int, int]:

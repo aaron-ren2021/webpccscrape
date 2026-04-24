@@ -178,6 +178,60 @@ def classify_outcome(
 
 
 # ---------------------------------------------------------------------------
+# classify_outcome_with_page – synchronous, Playwright locator + regex fallback
+# ---------------------------------------------------------------------------
+
+def classify_outcome_with_page(
+    page: Any,
+    html: str,
+    status_code: int = 200,
+    expected_selector_found: bool = True,
+    timed_out: bool = False,
+    url: str = "",
+) -> CrawlOutcome:
+    """Enhanced sync classification using Playwright locators + regex fallback."""
+    if timed_out:
+        return CrawlOutcome.TIMEOUT
+
+    if status_code == 403:
+        return CrawlOutcome.HARD_BLOCK
+    if status_code == 429:
+        return CrawlOutcome.RATE_LIMITED
+    if status_code >= 500:
+        return CrawlOutcome.UNKNOWN_FAILURE
+
+    if page is not None:
+        for rule in DETECTION_RULES:
+            if not rule.locators:
+                continue
+            combined = ", ".join(rule.locators)
+            try:
+                if page.locator(combined).count() > 0:
+                    return rule.outcome
+            except Exception:
+                pass
+
+        try:
+            verify_btn = page.get_by_role(
+                "button",
+                name=re.compile(r"驗證|Verify|Continue|Submit", re.IGNORECASE),
+            )
+            if verify_btn.count() > 0:
+                return CrawlOutcome.CAPTCHA
+        except Exception:
+            pass
+
+    for rule in DETECTION_RULES:
+        if any(p.search(html) for p in rule.patterns):
+            return rule.outcome
+
+    if not expected_selector_found:
+        return CrawlOutcome.EMPTY_CONTENT
+
+    return CrawlOutcome.SUCCESS
+
+
+# ---------------------------------------------------------------------------
 # classify_outcome_advanced – async, Playwright locator + regex fallback
 # ---------------------------------------------------------------------------
 

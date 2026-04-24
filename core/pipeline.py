@@ -14,7 +14,7 @@ from core.ai_classifier import AIClassification, build_ai_clients, classify_bids
 from core.config import Settings
 from core.dedup import deduplicate_bids
 from core.filters import filter_bids
-from core.formatter import render_email_html, render_email_subject
+from core.formatter import find_earliest_deadline, render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
 from core.normalize import build_bid_uid
 from notify.dispatcher import send_email
@@ -162,12 +162,8 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         _write_preview_html_if_needed(settings.preview_html_path, html_content, logger)
 
         try:
-            # Find earliest deadline for subject line
-            earliest_deadline = None
-            for record in new_records:
-                if record.bid_date:
-                    if earliest_deadline is None or record.bid_date < earliest_deadline:
-                        earliest_deadline = record.bid_date
+            # Find earliest deadline for subject line (normalized to CE format)
+            earliest_deadline = find_earliest_deadline(new_records)
             
             subject = render_email_subject(
                 settings.email_subject_prefix,

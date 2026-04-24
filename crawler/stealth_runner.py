@@ -17,12 +17,17 @@ from crawler.behavior.throttle import ThrottleConfig, ThrottleController
 from crawler.detection.detection_logger import (
     CrawlOutcome,
     DetectionLogger,
-    classify_outcome,
+    classify_outcome_with_page,
 )
+from crawler.detection.strategies import get_retry_strategy
 from crawler.network.proxy_manager import ProxyConfig, ProxyManager
 from crawler.session.session_manager import SessionManager
 from crawler.stealth.browser_stealth import create_stealth_context
-from crawler.stealth.fingerprint_profiles import FingerprintProfile, pick_profile
+from crawler.stealth.fingerprint_profiles import (
+    FingerprintProfile,
+    apply_profile_overrides,
+    pick_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,9 @@ class StealthCrawlerConfig:
         proxy: ProxyConfig | None = None,
         max_retries: int = 2,
         max_requests_per_identity: int = 4,  # New: identity rotation threshold
+        locale_pool: list[str] | None = None,
+        timezone_pool: list[str] | None = None,
+        align_locale_timezone_with_proxy: bool = False,
     ) -> None:
         self.headless = headless
         self.timeout_ms = timeout_ms
@@ -121,6 +129,9 @@ class StealthCrawlerConfig:
         self.proxy = proxy or ProxyConfig()
         self.max_retries = max_retries
         self.max_requests_per_identity = max_requests_per_identity
+        self.locale_pool = list(locale_pool or [])
+        self.timezone_pool = list(timezone_pool or [])
+        self.align_locale_timezone_with_proxy = align_locale_timezone_with_proxy
 
 
 def _domain_from_url(url: str) -> str:
@@ -173,9 +184,14 @@ def stealth_fetch_html(
     det_logger = DetectionLogger(artifact_dir=config.artifact_dir)
 
     if profile is None:
-        profile = pick_profile()
+        profile = pick_profile(
+            locale_pool=config.locale_pool,
+            timezone_pool=config.timezone_pool,
+            align_with_proxy=False,
+        )
 
     last_error: Exception | None = None
+    behavior_intensity = "normal"
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -193,11 +209,15 @@ def stealth_fetch_html(
             page = None
             timed_out = False
             html = ""
+            proxy_dict: dict[str, str] | None = None
+            used_profile = profile
 
             try:
                 # --- Throttle ---
                 if attempt > 1:
                     throttle.backoff_after_detection()
+                    if behavior_intensity == "elevated":
+                        pre_navigation_delay()
                 else:
                     pre_navigation_delay()
 
@@ -210,9 +230,17 @@ def stealth_fetch_html(
                 proxy_dict = proxy_mgr.get_proxy(domain)
 
                 # --- Stealth context ---
+                active_profile = apply_profile_overrides(
+                    profile,
+                    locale_pool=config.locale_pool,
+                    timezone_pool=config.timezone_pool,
+                    align_with_proxy=config.align_locale_timezone_with_proxy,
+                    proxy_server=(proxy_dict or {}).get("server", ""),
+                )
+
                 context, used_profile = create_stealth_context(
                     browser,
-                    profile=profile,
+                    profile=active_profile,
                     proxy=proxy_dict,
                     storage_state=storage_state,
                 )
@@ -236,30 +264,45 @@ def stealth_fetch_html(
                 # --- Human behavior ---
                 if config.enable_human_behavior and not timed_out:
                     simulate_page_read(page)
+                    if behavior_intensity == "elevated":
+                        simulate_page_read(page)
                     html = page.content()  # re-read after JS may have rendered more
 
                 # --- Classify outcome ---
                 selector_found = bool(
                     not timed_out and page.query_selector(config.wait_selector)
                 )
-                outcome = classify_outcome(
+                outcome = classify_outcome_with_page(
+                    page=page,
                     html=html,
                     expected_selector_found=selector_found,
                     timed_out=timed_out,
                     url=url,
                 )
 
-                det_logger.log_event(
+                strategy_plan = get_retry_strategy(
+                    outcome,
+                    attempt,
+                    context={"runner": "single", "max_retries": config.max_retries},
+                )
+                event = det_logger.log_failure(
+                    page=page,
+                    html=html,
                     url=url,
                     outcome=outcome,
                     proxy=proxy_dict.get("server", "") if proxy_dict else "",
                     user_agent=used_profile.user_agent,
                     session_id=domain,
-                    extra={"attempt": attempt},
+                    extra={
+                        "attempt": attempt,
+                        "actions": list(strategy_plan.actions),
+                        "human_behavior_intensity": strategy_plan.human_behavior_intensity,
+                    },
                 )
 
                 if outcome == CrawlOutcome.SUCCESS:
                     throttle.reset_failure_streak()
+                    behavior_intensity = "normal"
                     # Save session on success
                     if session_mgr and context:
                         try:
@@ -273,41 +316,39 @@ def stealth_fetch_html(
                     )
                     return html
 
-                # --- Capture failure artifacts ---
-                if page:
-                    det_logger.capture_screenshot(page, url, label=outcome)
-                if html:
-                    det_logger.capture_html(html, url, label=outcome)
-
                 log.warning(
                     "stealth_fetch_blocked",
-                    extra={"url": url, "attempt": attempt, "outcome": outcome},
+                    extra={
+                        "url": url,
+                        "attempt": attempt,
+                        "outcome": outcome,
+                        "actions": event.get("actions", []),
+                    },
                 )
 
-                # --- Intelligent failure response ---
-                # Certain failures are terminal - don't waste retries
-                if outcome in (
-                    CrawlOutcome.CAPTCHA,
-                    CrawlOutcome.HARD_BLOCK,
-                    CrawlOutcome.ACCESS_DENIED,
-                ):
+                behavior_intensity = strategy_plan.human_behavior_intensity
+                throttle.record_failure()
+
+                if "abort" in strategy_plan.actions or not strategy_plan.retry:
                     log.error(
                         "stealth_fetch_terminal_failure",
-                        extra={"url": url, "outcome": outcome, "message": "Aborting retries for terminal failure"},
+                        extra={
+                            "url": url,
+                            "outcome": outcome,
+                            "failure_reason": "Aborting retries for terminal failure",
+                        },
                     )
                     browser.close()
                     raise RuntimeError(
                         f"Terminal failure detected ({outcome}) for {url}. Not retrying."
                     )
 
-                # For recoverable failures, force fingerprint rotation on next attempt
-                if outcome in (
-                    CrawlOutcome.RATE_LIMITED,
-                    CrawlOutcome.CLOUDFLARE_CHALLENGE,
-                    CrawlOutcome.SOFT_BLOCK,
-                ):
-                    # Pick a new profile for the next attempt
-                    profile = pick_profile()
+                if "rotate_profile" in strategy_plan.actions:
+                    profile = pick_profile(
+                        locale_pool=config.locale_pool,
+                        timezone_pool=config.timezone_pool,
+                        align_with_proxy=False,
+                    )
                     log.info(
                         "stealth_fetch_rotating_fingerprint",
                         extra={
@@ -317,22 +358,36 @@ def stealth_fetch_html(
                         },
                     )
 
-                # Report proxy failure so rotation can switch
-                if proxy_dict:
+                if "rotate_proxy" in strategy_plan.actions and proxy_dict:
                     proxy_mgr.report_failure(proxy_dict.get("server", ""), domain)
 
+            except RuntimeError:
+                raise
             except Exception as exc:
                 last_error = exc
                 log.warning(
                     "stealth_fetch_error",
                     extra={"url": url, "attempt": attempt, "error": str(exc)},
                 )
-                det_logger.log_event(
+                det_logger.log_failure(
+                    page=page,
+                    html=html,
                     url=url,
                     outcome=CrawlOutcome.UNKNOWN_FAILURE,
+                    proxy=proxy_dict.get("server", "") if proxy_dict else "",
+                    user_agent=used_profile.user_agent if used_profile else "",
+                    session_id=domain,
                     error=str(exc),
-                    extra={"attempt": attempt},
+                    extra={
+                        "attempt": attempt,
+                        "actions": ["backoff", "rotate_proxy"],
+                        "human_behavior_intensity": "elevated",
+                    },
                 )
+                throttle.record_failure()
+                behavior_intensity = "elevated"
+                if proxy_dict:
+                    proxy_mgr.report_failure(proxy_dict.get("server", ""), domain)
             finally:
                 if context:
                     try:

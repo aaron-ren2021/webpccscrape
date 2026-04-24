@@ -12,11 +12,53 @@ from core.models import BidRecord
 _BOND_FREE_VALUES: frozenset[str] = frozenset({"0", "無", "無提供", "none", ""})
 
 
-def render_email_subject(prefix: str, run_date: date, count: int, earliest_deadline: Optional[date] = None) -> str:
+def _parse_deadline_to_sort_key(s: str) -> tuple[int, int, int, int, int]:
+    """Parse deadline text and normalize ROC year to CE for sorting."""
+    try:
+        parts = s.strip().split()
+        if not parts:
+            return (9999, 12, 31, 23, 59)
+
+        date_part = parts[0].replace("-", "/")
+        time_part = parts[1] if len(parts) > 1 else "00:00"
+        y, m, d = date_part.split("/")
+        h, mi = time_part.split(":")
+
+        year = int(y)
+        if year < 1911:
+            year += 1911
+
+        return (year, int(m), int(d), int(h), int(mi))
+    except Exception:
+        return (9999, 12, 31, 23, 59)
+
+
+def _format_deadline_ce(s: str) -> str:
+    year, month, day, hour, minute = _parse_deadline_to_sort_key(s)
+    if (year, month, day, hour, minute) == (9999, 12, 31, 23, 59):
+        return s
+    if hour == 0 and minute == 0 and ":" not in s:
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}"
+
+
+def find_earliest_deadline(records: list[BidRecord]) -> Optional[str]:
+    deadlines = [
+        r.bid_deadline.strip()
+        for r in records
+        if r.bid_deadline and r.bid_deadline.strip() not in ("", "無提供")
+    ]
+    if not deadlines:
+        return None
+    earliest_raw = min(deadlines, key=_parse_deadline_to_sort_key)
+    return _format_deadline_ce(earliest_raw)
+
+
+def render_email_subject(prefix: str, run_date: date, count: int, earliest_deadline: Optional[str] = None) -> str:
     """Render email subject with optional earliest deadline."""
     base = f"{prefix} {run_date.isoformat()} 新增 {count} 筆"
     if earliest_deadline:
-        return f"{base}｜最緊急截止 {earliest_deadline.isoformat()}"
+        return f"{base}｜最緊急截止 {earliest_deadline}"
     return base
 
 
@@ -35,9 +77,7 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     ]
 
     # Find earliest deadline
-    deadlines = [r.bid_deadline.strip() for r in records
-                 if r.bid_deadline and r.bid_deadline.strip() not in ("", "無提供")]
-    earliest_deadline = min(deadlines) if deadlines else None
+    earliest_deadline = find_earliest_deadline(records)
 
     unit_summary = "、".join(f"{escape(k)}: {v}" for k, v in sorted(unit_counts.items())) or "無"
     tag_summary = "、".join(f"{escape(tag)}({count})" for tag, count in tag_counter.most_common()) or "無"
@@ -95,16 +135,16 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
                    style="background:#f9fafb;border-left:3px solid #3b82f6;border-radius:0 8px 8px 0;">
               <tr>
                 <td style="padding:12px 16px;">
-                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                  <div style="font-size:13px;color:#374151;padding:4px 0;">
                     <strong>&#128202; 今日新增：</strong>{len(records)} 筆
                   </div>
-                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                  <div style="font-size:13px;color:#374151;padding:4px 0;">
                     <strong>&#127979; 單位類型：</strong>{unit_summary}
                   </div>
-                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                  <div style="font-size:13px;color:#374151;padding:4px 0;">
                     <strong>&#127991; 主題標籤：</strong>{tag_summary}
                   </div>
-                  <div style="font-size:13px;color:#374151;padding:2px 0;">
+                  <div style="font-size:13px;color:#374151;padding:4px 0;">
                     <strong>&#128176; 高金額案件：</strong>{escape(high_amount_summary)}
                   </div>
                 </td>
@@ -289,7 +329,7 @@ def _render_card(index: int, record: BidRecord) -> str:
                  border-radius:10px 10px 0 0;">
         <span style="display:inline-block;font-size:11px;font-weight:600;
                      background:#dbeafe;color:#1e40af;
-                     padding:2px 8px;border-radius:4px;margin-right:8px;">
+                     padding:2px 8px;border-radius:4px;margin-right:12px;">
           #{index}
         </span>
         <span style="font-size:14px;font-weight:600;color:#111827;">{title}</span>

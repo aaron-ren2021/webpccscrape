@@ -1,6 +1,6 @@
 from datetime import date
 
-from core.filters import filter_bids, screen_bids
+from core.filters import filter_bids, has_theme_match
 from core.models import BidRecord
 
 
@@ -18,28 +18,18 @@ def _bid(title: str, org: str, summary: str = "", category: str = "") -> BidReco
     )
 
 
-def test_hybrid_screening_separates_high_boundary_and_excluded() -> None:
+def test_theme_match_separates_in_scope_and_excluded() -> None:
     records = [
         _bid("校務系統建置案", "某某大學", summary="校務系統升級與整合"),
         _bid("文件流轉", "某某大學", summary=""),
         _bid("桌椅採購", "某某大學", summary="教室桌椅汰換"),
     ]
 
-    high_confidence, boundary, stats = screen_bids(records)
+    matched = [r.title for r in records if has_theme_match(r.title, r.summary, r.category)]
+    excluded = [r.title for r in records if not has_theme_match(r.title, r.summary, r.category)]
 
-    assert [record.title for record in high_confidence] == ["校務系統建置案"]
-    assert [record.title for record in boundary] == ["文件流轉"]
-    assert stats["high_confidence"] == 1
-    assert stats["boundary"] == 1
-    assert stats["excluded_strong"] == 1
-
-    assert high_confidence[0].metadata["filter_source"] == "keyword_high_confidence"
-    assert boundary[0].metadata["filter_source"] == "keyword_boundary"
-    assert high_confidence[0].metadata["keyword_confidence"] == "high_confidence"
-    assert boundary[0].metadata["keyword_confidence"] == "boundary"
-    assert high_confidence[0].metadata["business_bucket"] == "high_confidence"
-    assert boundary[0].metadata["business_bucket"] == "boundary_for_semantic"
-    assert records[2].metadata["business_bucket"] == "excluded"
+    assert matched == ["校務系統建置案"]
+    assert excluded == ["文件流轉", "桌椅採購"]
 
 
 def test_filter_bids_keeps_boundary_cases_for_embedding() -> None:
@@ -51,4 +41,4 @@ def test_filter_bids_keeps_boundary_cases_for_embedding() -> None:
 
     output = filter_bids(records)
 
-    assert [record.title for record in output] == ["校務系統建置案", "文件流轉"]
+    assert [record.title for record in output] == ["校務系統建置案"]

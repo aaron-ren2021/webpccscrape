@@ -9,6 +9,7 @@ from crawler.detection.detection_logger import (
     CrawlOutcome,
     DetectionLogger,
     classify_outcome,
+    classify_outcome_with_page,
 )
 from crawler.network.proxy_manager import ProxyConfig, ProxyEntry, ProxyManager
 from crawler.session.session_manager import SessionManager
@@ -44,6 +45,18 @@ def test_viewport_jitter_stays_in_range():
         assert h >= 600
         assert abs(w - p.viewport_width) <= 20
         assert abs(h - p.viewport_height) <= 10
+
+
+def test_pick_profile_with_locale_timezone_pool():
+    p = pick_profile(seed=42, locale_pool=["ja-JP"], timezone_pool=["Asia/Tokyo"])
+    assert p.locale == "ja-JP"
+    assert p.timezone_id == "Asia/Tokyo"
+
+
+def test_pick_profile_proxy_alignment_hook():
+    p = pick_profile(seed=42, align_with_proxy=True, proxy_server="http://us-proxy-1.example:8080")
+    assert p.locale == "en-US"
+    assert p.timezone_id == "America/Los_Angeles"
 
 
 # --- classify_outcome ---
@@ -91,6 +104,67 @@ def test_classify_soft_block_markers():
     assert classify_outcome("<html>異常流量</html>") == CrawlOutcome.SOFT_BLOCK
 
 
+class _FakeLocator:
+    def __init__(self, count_value: int) -> None:
+        self._count_value = count_value
+
+    def count(self) -> int:
+        return self._count_value
+
+
+class _FakePage:
+    def __init__(self, selector_counts: dict[str, int] | None = None, button_count: int = 0, raise_locator: bool = False) -> None:
+        self._selector_counts = selector_counts or {}
+        self._button_count = button_count
+        self._raise_locator = raise_locator
+
+    def locator(self, selector: str) -> _FakeLocator:
+        if self._raise_locator:
+            raise RuntimeError("locator unavailable")
+        return _FakeLocator(self._selector_counts.get(selector, 0))
+
+    def get_by_role(self, role: str, name=None) -> _FakeLocator:
+        return _FakeLocator(self._button_count)
+
+
+def test_classify_outcome_with_page_locator_hit():
+    page = _FakePage(selector_counts={"form[action*='captcha'], #captcha, .g-recaptcha, .h-captcha, [class*='cf-turnstile']": 1})
+    outcome = classify_outcome_with_page(
+        page=page,
+        html="<html><body>normal</body></html>",
+    )
+    assert outcome == CrawlOutcome.CAPTCHA
+
+
+def test_classify_outcome_with_page_regex_fallback_on_locator_error():
+    page = _FakePage(raise_locator=True)
+    outcome = classify_outcome_with_page(
+        page=page,
+        html="<html>Just a moment...</html>",
+    )
+    assert outcome == CrawlOutcome.CLOUDFLARE_CHALLENGE
+
+
+def test_classify_outcome_with_page_timeout_priority():
+    page = _FakePage(selector_counts={"#captcha": 1})
+    outcome = classify_outcome_with_page(
+        page=page,
+        html="<html>驗證碼檢核</html>",
+        timed_out=True,
+    )
+    assert outcome == CrawlOutcome.TIMEOUT
+
+
+def test_classify_outcome_with_page_expected_selector_missing():
+    page = _FakePage()
+    outcome = classify_outcome_with_page(
+        page=page,
+        html="<html></html>",
+        expected_selector_found=False,
+    )
+    assert outcome == CrawlOutcome.EMPTY_CONTENT
+
+
 def test_crawl_outcome_is_str():
     """CrawlOutcome is a StrEnum and compares equal to plain strings."""
     assert CrawlOutcome.SUCCESS == "success"
@@ -123,6 +197,33 @@ def test_detection_logger_html_capture():
         assert path.endswith(".html")
         with open(path) as f:
             assert "<html>test</html>" in f.read()
+
+
+def test_detection_logger_log_failure_records_event_and_artifacts_once(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        dl = DetectionLogger(artifact_dir=td)
+        calls: list[tuple[str, str]] = []
+
+        def fake_screenshot(page, url, label=""):
+            calls.append(("screenshot", str(label)))
+            return "/tmp/fake.png"
+
+        def fake_html(html, url, label=""):
+            calls.append(("html", str(label)))
+            return "/tmp/fake.html"
+
+        monkeypatch.setattr(dl, "capture_screenshot", fake_screenshot)
+        monkeypatch.setattr(dl, "capture_html", fake_html)
+
+        event = dl.log_failure(
+            page=object(),
+            html="<html>blocked</html>",
+            url="https://example.com/fail",
+            outcome=CrawlOutcome.SOFT_BLOCK,
+        )
+
+        assert event["outcome"] == CrawlOutcome.SOFT_BLOCK
+        assert calls == [("screenshot", "soft_block"), ("html", "soft_block")]
 
 
 # --- ThrottleController ---
