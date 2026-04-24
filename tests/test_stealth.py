@@ -61,26 +61,46 @@ def test_classify_hard_block_403():
     assert classify_outcome("<html>Forbidden</html>", status_code=403) == CrawlOutcome.HARD_BLOCK
 
 
-def test_classify_soft_block_429():
-    assert classify_outcome("<html>rate limited</html>", status_code=429) == CrawlOutcome.SOFT_BLOCK
+def test_classify_rate_limited_429():
+    assert classify_outcome("<html>rate limited</html>", status_code=429) == CrawlOutcome.RATE_LIMITED
 
 
 def test_classify_timeout():
     assert classify_outcome("", timed_out=True) == CrawlOutcome.TIMEOUT
 
 
-def test_classify_js_challenge():
-    assert classify_outcome("<html>Just a moment...</html>") == CrawlOutcome.REDIRECT_CHALLENGE
-    assert classify_outcome('<html><div class="cf-browser-verification"></div></html>') == CrawlOutcome.REDIRECT_CHALLENGE
+def test_classify_cloudflare_challenge():
+    assert classify_outcome("<html>Just a moment...</html>") == CrawlOutcome.CLOUDFLARE_CHALLENGE
+    assert classify_outcome('<html><div class="cf-browser-verification"></div></html>') == CrawlOutcome.CLOUDFLARE_CHALLENGE
 
 
 def test_classify_empty_content():
     assert classify_outcome("<html></html>", expected_selector_found=False) == CrawlOutcome.EMPTY_CONTENT
 
 
+def test_classify_access_denied():
+    assert classify_outcome("<html>access denied</html>") == CrawlOutcome.ACCESS_DENIED
+
+
+def test_classify_rate_limited_content():
+    assert classify_outcome("<html>請稍後再試</html>") == CrawlOutcome.RATE_LIMITED
+
+
 def test_classify_soft_block_markers():
-    assert classify_outcome("<html>access denied</html>") == CrawlOutcome.SOFT_BLOCK
-    assert classify_outcome("<html>請稍後再試</html>") == CrawlOutcome.SOFT_BLOCK
+    assert classify_outcome("<html>unusual traffic detected</html>") == CrawlOutcome.SOFT_BLOCK
+    assert classify_outcome("<html>異常流量</html>") == CrawlOutcome.SOFT_BLOCK
+
+
+def test_crawl_outcome_is_str():
+    """CrawlOutcome is a StrEnum and compares equal to plain strings."""
+    assert CrawlOutcome.SUCCESS == "success"
+    assert isinstance(CrawlOutcome.CAPTCHA, str)
+
+
+def test_detection_rules_sorted_by_priority():
+    from crawler.detection.detection_logger import DETECTION_RULES
+    priorities = [r.priority for r in DETECTION_RULES]
+    assert priorities == sorted(priorities, reverse=True)
 
 
 # --- DetectionLogger ---

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,67 +15,128 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".detection_logs")
 
 
-class CrawlOutcome:
+# ---------------------------------------------------------------------------
+# CrawlOutcome – StrEnum for type safety & ergonomic string comparison
+# ---------------------------------------------------------------------------
+
+class CrawlOutcome(StrEnum):
     """Enumeration of possible crawl result types."""
 
     SUCCESS = "success"
-    SOFT_BLOCK = "soft_block"      # Page loaded but content hidden / challenge presented
-    HARD_BLOCK = "hard_block"      # HTTP 403 / explicit deny
-    CAPTCHA = "captcha"            # CAPTCHA page detected
-    TIMEOUT = "timeout"            # Page load timed out
-    REDIRECT_CHALLENGE = "redirect_challenge"  # Redirected to a challenge page
-    EMPTY_CONTENT = "empty_content"  # Page loaded but no expected content found
+    SOFT_BLOCK = "soft_block"
+    HARD_BLOCK = "hard_block"
+    CAPTCHA = "captcha"
+    TIMEOUT = "timeout"
+    REDIRECT_CHALLENGE = "redirect_challenge"
+    EMPTY_CONTENT = "empty_content"
     UNKNOWN_FAILURE = "unknown_failure"
-    ACCESS_DENIED = "access_denied"  # Explicit access denied message
-    CLOUDFLARE_CHALLENGE = "cloudflare_challenge"  # Cloudflare bot challenge
-    RATE_LIMITED = "rate_limited"  # Too many requests / rate limit hit
+    ACCESS_DENIED = "access_denied"
+    CLOUDFLARE_CHALLENGE = "cloudflare_challenge"
+    RATE_LIMITED = "rate_limited"
 
 
-# Common indicators for challenge / block pages
-_CAPTCHA_MARKERS = [
-    "驗證碼檢核",
-    "請輸入驗證碼",
-    "captcha",
-    "recaptcha",
-    "hCaptcha",
-    "cf-turnstile",
-    "請完成驗證",
-]
+# ---------------------------------------------------------------------------
+# DetectionRule – data-driven rule engine
+# ---------------------------------------------------------------------------
 
-_CLOUDFLARE_MARKERS = [
-    "cf-browser-verification",
-    "challenge-platform",
-    "Just a moment",
-    "Checking your browser",
-    "_cf_chl_opt",
-    "managed_checking_msg",
-    "cf-wrapper",
-    "__cf_chl_jschl_tk__",
-]
+@dataclass(slots=True)
+class DetectionRule:
+    """A single content-based detection rule.
 
-_ACCESS_DENIED_MARKERS = [
-    "access denied",
-    "存取被拒",
-    "拒絕存取",
-    "403 forbidden",
-    "您無權限存取",
-]
+    Attributes:
+        outcome:  The CrawlOutcome to return when this rule matches.
+        patterns: Compiled regex patterns – *any* match triggers the rule.
+        priority: Higher values are evaluated first.
+        locators: Optional Playwright CSS selectors for DOM-level detection.
+    """
 
-_RATE_LIMIT_MARKERS = [
-    "too many requests",
-    "請稍後再試",
-    "rate limit",
-    "請求過於頻繁",
-    "429",
-]
+    outcome: CrawlOutcome
+    patterns: list[re.Pattern[str]]
+    priority: int
+    locators: list[str] = field(default_factory=list)
 
-_SOFT_BLOCK_MARKERS = [
-    "unusual traffic",
-    "異常流量",
-    "suspicious activity",
-    "請重新整理",
-]
 
+# Rules are ordered by priority descending at module load time.
+DETECTION_RULES: list[DetectionRule] = sorted(
+    [
+        DetectionRule(
+            outcome=CrawlOutcome.CAPTCHA,
+            patterns=[
+                re.compile(
+                    r"驗證碼檢核|請輸入驗證碼|captcha|recaptcha|hcaptcha"
+                    r"|cf-turnstile|請完成驗證",
+                    re.IGNORECASE,
+                ),
+            ],
+            priority=100,
+            locators=[
+                "form[action*='captcha']",
+                "#captcha",
+                ".g-recaptcha",
+                ".h-captcha",
+                "[class*='cf-turnstile']",
+            ],
+        ),
+        DetectionRule(
+            outcome=CrawlOutcome.CLOUDFLARE_CHALLENGE,
+            patterns=[
+                re.compile(
+                    r"cf-browser-verification|challenge-platform"
+                    r"|Just a moment|Checking your browser"
+                    r"|_cf_chl_opt|managed_checking_msg"
+                    r"|cf-wrapper|__cf_chl_jschl_tk__|__cf_chl_",
+                    re.IGNORECASE,
+                ),
+            ],
+            priority=90,
+            locators=[
+                "div#challenge-running",
+                "form#challenge-form",
+                "#cf-wrapper",
+            ],
+        ),
+        DetectionRule(
+            outcome=CrawlOutcome.ACCESS_DENIED,
+            patterns=[
+                re.compile(
+                    r"access\s*denied|存取被拒|拒絕存取"
+                    r"|403\s*forbidden|您無權限存取",
+                    re.IGNORECASE,
+                ),
+            ],
+            priority=80,
+        ),
+        DetectionRule(
+            outcome=CrawlOutcome.RATE_LIMITED,
+            patterns=[
+                re.compile(
+                    r"too\s*many\s*requests|請稍後再試"
+                    r"|rate\s*limit|請求過於頻繁",
+                    re.IGNORECASE,
+                ),
+            ],
+            priority=70,
+        ),
+        DetectionRule(
+            outcome=CrawlOutcome.SOFT_BLOCK,
+            patterns=[
+                re.compile(
+                    r"unusual\s*traffic|異常流量"
+                    r"|suspicious\s*activity|請重新整理",
+                    re.IGNORECASE,
+                ),
+            ],
+            priority=60,
+        ),
+    ],
+    key=lambda r: r.priority,
+    reverse=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# classify_outcome – synchronous, regex-based
+# ---------------------------------------------------------------------------
 
 def classify_outcome(
     html: str,
@@ -80,19 +144,15 @@ def classify_outcome(
     expected_selector_found: bool = True,
     timed_out: bool = False,
     url: str = "",
-) -> str:
+) -> CrawlOutcome:
     """Classify a crawl attempt into a standard outcome category.
-    
-    Classification priority (high to low):
-    1. Timeout
-    2. HTTP status codes (403, 429, 5xx)
-    3. CAPTCHA markers
-    4. Cloudflare challenge markers
-    5. Access denied markers
-    6. Rate limit markers
-    7. Soft block markers
-    8. Empty content
-    9. Success
+
+    Classification priority (high → low):
+      1. Timeout
+      2. HTTP status codes (403, 429, 5xx)
+      3. Content-based rules via ``DETECTION_RULES`` (regex, ordered by priority)
+      4. Empty content (expected selector not found)
+      5. Success
     """
     if timed_out:
         return CrawlOutcome.TIMEOUT
@@ -105,39 +165,82 @@ def classify_outcome(
     if status_code >= 500:
         return CrawlOutcome.UNKNOWN_FAILURE
 
-    html_lower = html.lower()
+    # Content-based detection via rule engine (any() short-circuits early)
+    for rule in DETECTION_RULES:
+        if any(p.search(html) for p in rule.patterns):
+            return rule.outcome
 
-    # Check for CAPTCHA (highest priority for content-based detection)
-    for marker in _CAPTCHA_MARKERS:
-        if marker.lower() in html_lower:
-            return CrawlOutcome.CAPTCHA
-
-    # Check for Cloudflare challenge
-    for marker in _CLOUDFLARE_MARKERS:
-        if marker.lower() in html_lower:
-            return CrawlOutcome.CLOUDFLARE_CHALLENGE
-
-    # Check for explicit access denied
-    for marker in _ACCESS_DENIED_MARKERS:
-        if marker.lower() in html_lower:
-            return CrawlOutcome.ACCESS_DENIED
-
-    # Check for rate limiting
-    for marker in _RATE_LIMIT_MARKERS:
-        if marker.lower() in html_lower:
-            return CrawlOutcome.RATE_LIMITED
-
-    # Check for soft blocks
-    for marker in _SOFT_BLOCK_MARKERS:
-        if marker.lower() in html_lower:
-            return CrawlOutcome.SOFT_BLOCK
-
-    # Check if expected content is missing
+    # Expected DOM element was not found
     if not expected_selector_found:
         return CrawlOutcome.EMPTY_CONTENT
 
     return CrawlOutcome.SUCCESS
 
+
+# ---------------------------------------------------------------------------
+# classify_outcome_advanced – async, Playwright locator + regex fallback
+# ---------------------------------------------------------------------------
+
+async def classify_outcome_advanced(
+    page: Any,
+    html: str,
+    status_code: int = 200,
+    expected_selector_found: bool = True,
+    timed_out: bool = False,
+    url: str = "",
+) -> CrawlOutcome:
+    """Enhanced classification using Playwright locators with regex fallback.
+
+    When a Playwright *page* object is available, DOM-level inspection is
+    performed first (more accurate than text matching).  Falls back to the
+    same regex rules used by :func:`classify_outcome`.
+    """
+    if timed_out:
+        return CrawlOutcome.TIMEOUT
+
+    if status_code == 403:
+        return CrawlOutcome.HARD_BLOCK
+    if status_code == 429:
+        return CrawlOutcome.RATE_LIMITED
+    if status_code >= 500:
+        return CrawlOutcome.UNKNOWN_FAILURE
+
+    # DOM-level detection via Playwright locators (highest accuracy)
+    if page is not None:
+        for rule in DETECTION_RULES:
+            if rule.locators:
+                combined = ", ".join(rule.locators)
+                try:
+                    if await page.locator(combined).count() > 0:
+                        return rule.outcome
+                except Exception:
+                    pass  # locator evaluation failed; fall through to regex
+
+        # Generic verify / continue button → CAPTCHA indicator
+        try:
+            verify_btn = page.get_by_role(
+                "button",
+                name=re.compile(r"驗證|Verify|Continue|Submit", re.IGNORECASE),
+            )
+            if await verify_btn.count() > 0:
+                return CrawlOutcome.CAPTCHA
+        except Exception:
+            pass
+
+    # Fallback: regex-based content detection
+    for rule in DETECTION_RULES:
+        if any(p.search(html) for p in rule.patterns):
+            return rule.outcome
+
+    if not expected_selector_found:
+        return CrawlOutcome.EMPTY_CONTENT
+
+    return CrawlOutcome.SUCCESS
+
+
+# ---------------------------------------------------------------------------
+# DetectionLogger – event logging & failure artifact capture
+# ---------------------------------------------------------------------------
 
 class DetectionLogger:
     """Log detection events and capture failure artifacts (screenshots, HTML)."""
@@ -149,6 +252,8 @@ class DetectionLogger:
 
     def _ts(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    # --- event recording ---------------------------------------------------
 
     def log_event(
         self,
@@ -182,8 +287,10 @@ class DetectionLogger:
         log_fn("crawl_outcome", extra=event)
         return event
 
+    # --- sync artifact capture ---------------------------------------------
+
     def capture_screenshot(self, page: Any, url: str, label: str = "") -> str:
-        """Take a screenshot of the current page. Returns the file path."""
+        """Take a screenshot of the current page (sync). Returns file path."""
         ts = self._ts()
         safe_label = (label or "fail").replace("/", "_")[:30]
         filename = f"{ts}_{safe_label}.png"
@@ -210,12 +317,96 @@ class DetectionLogger:
             return ""
         return str(path)
 
+    # --- async artifact capture --------------------------------------------
+
+    async def async_capture_screenshot(self, page: Any, url: str, label: str = "") -> str:
+        """Take a screenshot of the current page (async). Returns file path."""
+        ts = self._ts()
+        safe_label = (label or "fail").replace("/", "_")[:30]
+        filename = f"{ts}_{safe_label}.png"
+        path = self._artifact_dir / filename
+        try:
+            await page.screenshot(path=str(path), full_page=True)
+            logger.info("screenshot_captured", extra={"path": str(path), "url": url})
+        except Exception as exc:
+            logger.warning("screenshot_failed", extra={"error": str(exc), "url": url})
+            return ""
+        return str(path)
+
+    # --- convenience: auto-capture on failure ------------------------------
+
+    def log_failure(
+        self,
+        page: Any,
+        html: str,
+        url: str,
+        outcome: str,
+        *,
+        status_code: int = 0,
+        proxy: str = "",
+        user_agent: str = "",
+        session_id: str = "",
+        error: str = "",
+        extra: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Log a failure event and auto-capture screenshot + HTML artifacts."""
+        event = self.log_event(
+            url=url,
+            outcome=outcome,
+            status_code=status_code,
+            proxy=proxy,
+            user_agent=user_agent,
+            session_id=session_id,
+            error=error,
+            extra=extra,
+        )
+        if outcome != CrawlOutcome.SUCCESS:
+            if page:
+                self.capture_screenshot(page, url, label=outcome)
+            if html:
+                self.capture_html(html, url, label=outcome)
+        return event
+
+    async def async_log_failure(
+        self,
+        page: Any,
+        html: str,
+        url: str,
+        outcome: str,
+        *,
+        status_code: int = 0,
+        proxy: str = "",
+        user_agent: str = "",
+        session_id: str = "",
+        error: str = "",
+        extra: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Async version: log failure event and auto-capture artifacts."""
+        event = self.log_event(
+            url=url,
+            outcome=outcome,
+            status_code=status_code,
+            proxy=proxy,
+            user_agent=user_agent,
+            session_id=session_id,
+            error=error,
+            extra=extra,
+        )
+        if outcome != CrawlOutcome.SUCCESS:
+            if page:
+                await self.async_capture_screenshot(page, url, label=outcome)
+            if html:
+                self.capture_html(html, url, label=outcome)
+        return event
+
+    # --- statistics --------------------------------------------------------
+
     @property
     def events(self) -> list[dict[str, Any]]:
         return list(self._events)
 
     def summary(self) -> dict[str, int]:
-        """Return a counter dict of outcome -> count."""
+        """Return a counter dict of outcome → count."""
         counts: dict[str, int] = {}
         for ev in self._events:
             outcome = ev.get("outcome", CrawlOutcome.UNKNOWN_FAILURE)
@@ -233,10 +424,11 @@ class DetectionLogger:
     def export_events_json(self, output_path: str) -> None:
         """Export all logged events to a JSON file for analysis."""
         import json
+
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self._events, f, indent=2, ensure_ascii=False)
-        
+
         logger.info("events_exported", extra={"path": str(output_path), "count": len(self._events)})
