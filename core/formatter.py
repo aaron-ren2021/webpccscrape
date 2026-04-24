@@ -215,23 +215,52 @@ def _render_card(index: int, record: BidRecord) -> str:
         else '<span style="font-size:13px;color:#d1d5db;">無標籤</span>'
     )
 
+    metadata = record.metadata or {}
+    source_text = record.source
+    if record.backup_source:
+        source_text = f"{record.source}(備份)"
+
+    is_g0v = "g0v" in source_text.lower()
+    g0v_human_state = str(metadata.get("g0v_human_url_state", "")).strip().lower()
+
     # Link
-    link = escape(record.url or "")
-    if link:
+    raw_link = (record.url or "").strip()
+    is_http_link = raw_link.startswith("http://") or raw_link.startswith("https://")
+    if is_http_link:
+        safe_link = escape(raw_link)
         link_html = (
-            f'<a href="{link}" target="_blank" rel="noreferrer"'
+            f'<a href="{safe_link}" target="_blank" rel="noreferrer"'
             f' style="display:inline-block;padding:3px 10px;border-radius:4px;'
             f'font-size:11px;text-decoration:none;'
             f'background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;">'
             f'&#128196; 查看詳情</a>'
         )
     else:
-        link_html = '<span style="font-size:13px;color:#d1d5db;">無連結</span>'
+        backup_links: list[str] = []
+        if is_g0v:
+            tender_api_url = str(metadata.get("g0v_tender_api_url", "")).strip()
+            unit_api_url = str(metadata.get("g0v_unit_api_url", "")).strip()
+            if tender_api_url.startswith("http"):
+                backup_links.append(
+                    '<a href="{}" target="_blank" rel="noreferrer" style="display:inline-block;padding:2px 8px;'
+                    'border-radius:4px;font-size:11px;text-decoration:none;background:#eff6ff;color:#1d4ed8;'
+                    'border:1px solid #bfdbfe;margin-right:4px;">來源 API</a>'.format(escape(tender_api_url))
+                )
+            if unit_api_url.startswith("http"):
+                backup_links.append(
+                    '<a href="{}" target="_blank" rel="noreferrer" style="display:inline-block;padding:2px 8px;'
+                    'border-radius:4px;font-size:11px;text-decoration:none;background:#f5f3ff;color:#5b21b6;'
+                    'border:1px solid #ddd6fe;">機關 API</a>'.format(escape(unit_api_url))
+                )
+        if backup_links:
+            link_html = (
+                '<div style="font-size:11px;color:#6b7280;margin-bottom:4px;">主連結不可用，請改用：</div>'
+                + "".join(backup_links)
+            )
+        else:
+            link_html = '<span style="font-size:13px;color:#d1d5db;">無連結</span>'
 
     # Source
-    source_text = record.source
-    if record.backup_source:
-        source_text = f"{record.source}(備份)"
     if source_text.lower() == "gov_pcc":
         source_display = "gov_pcc"
     elif "g0v" in source_text.lower():
@@ -240,6 +269,9 @@ def _render_card(index: int, record: BidRecord) -> str:
         source_display = "taiwanbuying"
     else:
         source_display = source_text
+    source_note = ""
+    if is_g0v and g0v_human_state and g0v_human_state != "valid":
+        source_note = '<div style="font-size:11px;color:#b45309;margin-top:4px;">資料連結暫不可用</div>'
 
     # Shared cell styles
     td_style = 'style="width:25%;padding:6px 20px 14px 0;vertical-align:top;"'
@@ -297,6 +329,7 @@ def _render_card(index: int, record: BidRecord) -> str:
       <td {td_last}>
         <div {label_style}>&#128204; 來源</div>
         <div style="font-size:12px;color:#6b7280;">{escape(source_display)}</div>
+        {source_note}
       </td>
     </tr>
   </table>"""

@@ -37,3 +37,21 @@ def test_render_card_deadline_does_not_fallback_to_bid_date() -> None:
     assert "2026-04-14" not in html
     assert "無提供" in html
 
+
+def test_render_card_g0v_unsafe_link_shows_backup_api_links() -> None:
+    record = _make_record(
+        source="g0v",
+        url="",
+        metadata={
+            "g0v_human_url_state": "unsafe",
+            "g0v_tender_api_url": "https://pcc-api.openfun.app/api/tender?unit_id=U&job_number=J",
+            "g0v_unit_api_url": "https://pcc-api.openfun.app/api/listbyunit?unit_id=U",
+        },
+    )
+
+    html = _render_card(1, record)
+
+    assert "查看詳情" not in html
+    assert "來源 API" in html
+    assert "機關 API" in html
+    assert "資料連結暫不可用" in html

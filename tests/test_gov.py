@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from crawler.gov import _extract_detail_fields, _is_captcha_page
+from crawler.gov import enrich_detail, fetch_bids
 from crawler.common import parse_html
+from core.config import Settings
 from core.models import BidRecord
 
 
@@ -87,3 +91,63 @@ def test_is_captcha_page_detects_captcha():
 
 def test_is_captcha_page_normal():
     assert _is_captcha_page(DETAIL_HTML) is False
+
+
+def test_fetch_bids_marks_degraded_mode_after_rate_limited_circuit_breaker(monkeypatch):
+    logger = MagicMock()
+
+    def _raise_rate_limited(*args, **kwargs):
+        raise RuntimeError(
+            "Stealth fetch failed after 2 attempts for https://web.pcc.gov.tw. "
+            "Summary: {'rate_limited': 2}"
+        )
+
+    list_html = """
+    <html><body>
+      <table><tbody>
+        <tr>
+          <td>115/04/24</td>
+          <td><a href="/tps/QueryTender/query/searchTenderDetail?pkPmsMain=AAA">測試標案</a></td>
+          <td>測試機關</td>
+        </tr>
+      </tbody></table>
+    </body></html>
+    """
+
+    monkeypatch.setattr("crawler.gov.optional_playwright_fetch_html", _raise_rate_limited)
+    monkeypatch.setattr("crawler.gov.build_session", lambda settings: object())
+    monkeypatch.setattr("crawler.gov.request_html", lambda **kwargs: list_html)
+
+    settings = Settings(
+        enable_playwright=True,
+        stealth_enabled=True,
+        gov_block_circuit_breaker_threshold=2,
+        gov_url="https://web.pcc.gov.tw/pis/",
+    )
+
+    records = fetch_bids(settings, logger)
+
+    assert len(records) == 1
+    assert records[0].metadata.get("detail_fetch_mode") == "degraded_blocked"
+
+
+def test_enrich_detail_skips_when_degraded_blocked(monkeypatch):
+    logger = MagicMock()
+    called = {"stealth": 0}
+
+    def _should_not_run(*args, **kwargs):
+        called["stealth"] += 1
+
+    monkeypatch.setattr("crawler.gov.enrich_detail_stealth", _should_not_run)
+
+    settings = Settings(enable_playwright=True, stealth_enabled=True)
+    records = [
+        _make_record(
+            metadata={"detail_fetch_mode": "degraded_blocked"},
+            url="https://web.pcc.gov.tw/tps/QueryTender/query/searchTenderDetail?pkPmsMain=AAA",
+        )
+    ]
+
+    enrich_detail(records, settings, logger)
+
+    assert called["stealth"] == 0

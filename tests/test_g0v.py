@@ -16,7 +16,8 @@ def test_parse_records_valid_data() -> None:
             "unit_name": "國立臺灣大學",
             "date": 20250407,
             "job_number": "JOB001",
-            "url": "/api/detail/JOB001",
+            "url": "/index/case/UNIT001/JOB001/20250407/TIQ-1-71000001",
+            "unit_api_url": "/api/listbyunit?unit_id=UNIT001",
             "unit_id": "UNIT001",
             "brief": {
                 "type": "公開招標公告",
@@ -33,11 +34,13 @@ def test_parse_records_valid_data() -> None:
     assert records[0].organization == "國立臺灣大學"
     assert records[0].source == "g0v"
     assert records[0].category == "資訊設備類"
-    assert records[0].url == "https://pcc-api.openfun.app/api/detail/JOB001"
+    assert records[0].url == "https://pcc-api.openfun.app/index/case/UNIT001/JOB001/20250407/TIQ-1-71000001"
     assert records[0].bid_date is None
     assert records[0].announcement_date is not None
     assert records[0].announcement_date.isoformat() == "2025-04-07"
     assert records[0].metadata["job_number"] == "JOB001"
+    assert records[0].metadata["g0v_human_url_state"] == "valid"
+    assert records[0].metadata["g0v_unit_api_url"] == "https://pcc-api.openfun.app/api/listbyunit?unit_id=UNIT001"
 
 
 def test_parse_records_filter_non_public_tender() -> None:
@@ -48,7 +51,7 @@ def test_parse_records_filter_non_public_tender() -> None:
             "unit_name": "測試單位A",
             "date": 20250401,
             "job_number": "JOB_PUBLIC",
-            "url": "/api/detail/JOB_PUBLIC",
+            "url": "/index/case/UNIT_A/JOB_PUBLIC/20250401/TIQ-1-71000002",
             "unit_id": "UNIT_A",
             "brief": {
                 "type": "公開招標公告",
@@ -60,7 +63,7 @@ def test_parse_records_filter_non_public_tender() -> None:
             "unit_name": "測試單位B",
             "date": 20250402,
             "job_number": "JOB_LIMITED",
-            "url": "/api/detail/JOB_LIMITED",
+            "url": "/index/case/UNIT_B/JOB_LIMITED/20250402/TIQ-1-71000003",
             "unit_id": "UNIT_B",
             "brief": {
                 "type": "限制性招標",  # Should be filtered out
@@ -72,7 +75,7 @@ def test_parse_records_filter_non_public_tender() -> None:
             "unit_name": "測試單位C",
             "date": 20250403,
             "job_number": "JOB_SELECTIVE",
-            "url": "/api/detail/JOB_SELECTIVE",
+            "url": "/index/case/UNIT_C/JOB_SELECTIVE/20250403/TIQ-1-71000004",
             "unit_id": "UNIT_C",
             "brief": {
                 "type": "選擇性招標",  # Should be filtered out
@@ -97,7 +100,7 @@ def test_parse_records_null_unit_name() -> None:
             "unit_name": None,  # Null unit_name
             "date": 20250410,
             "job_number": "JOB_NULL_UNIT",
-            "url": "/api/detail/JOB_NULL_UNIT",
+            "url": "/index/case/UNIT_NULL/JOB_NULL_UNIT/20250410/TIQ-1-71000005",
             "unit_id": "UNIT_NULL",
             "brief": {
                 "type": "公開招標公告",
@@ -122,7 +125,7 @@ def test_parse_records_missing_fields() -> None:
             "unit_name": "測試單位",
             "date": 20250415,
             "job_number": "JOB_MISSING",
-            "url": "/api/detail/JOB_MISSING",
+            "url": "/index/case/UNIT_M/JOB_MISSING/20250415/TIQ-1-71000006",
             "unit_id": "",
             "brief": {
                 "type": "公開招標公告",
@@ -134,7 +137,7 @@ def test_parse_records_missing_fields() -> None:
             "unit_name": "正常單位",
             "date": 20250416,
             "job_number": "JOB_VALID",
-            "url": "/api/detail/JOB_VALID",
+            "url": "/index/case/UNIT_VALID/JOB_VALID/20250416/TIQ-1-71000007",
             "unit_id": "UNIT_VALID",
             "brief": {
                 "type": "公開招標公告",
@@ -150,6 +153,60 @@ def test_parse_records_missing_fields() -> None:
     assert len(records) == 1
     assert records[0].title == "正常案件"
     assert records[0].metadata["job_number"] == "JOB_VALID"
+
+
+def test_parse_records_hide_unsafe_human_link_and_keep_api_backup() -> None:
+    mock_logger = MagicMock()
+    data = [
+        {
+            "unit_name": "測試單位",
+            "date": 20250407,
+            "job_number": "JOB_UNSAFE",
+            "url": "/api/detail/JOB_UNSAFE",
+            "unit_id": "UNIT_UNSAFE",
+            "tender_api_url": "/api/tender?unit_id=UNIT_UNSAFE&job_number=JOB_UNSAFE",
+            "brief": {
+                "type": "公開招標公告",
+                "title": "連結測試案件",
+                "category": "資訊設備類",
+            },
+        },
+    ]
+
+    records = _parse_records(data, mock_logger)
+
+    assert len(records) == 1
+    assert records[0].url == ""
+    assert records[0].metadata["g0v_human_url_state"] == "unsafe"
+    assert "api/tender?" in records[0].metadata["g0v_tender_api_url"]
+
+
+def test_parse_records_none_fields_do_not_raise() -> None:
+    mock_logger = MagicMock()
+    data = [
+        {
+            "unit_name": None,
+            "date": 20250407,
+            "job_number": "JOB_NONE",
+            "url": None,
+            "unit_id": "UNIT_NONE",
+            "brief": {
+                "type": "公開招標公告",
+                "title": "None 防呆案件",
+                "category": None,
+            },
+            "tender_api_url": None,
+            "unit_api_url": None,
+        },
+    ]
+
+    records = _parse_records(data, mock_logger)
+
+    assert len(records) == 1
+    assert records[0].organization == ""
+    assert records[0].category == ""
+    assert records[0].url == ""
+    assert records[0].metadata["g0v_human_url_state"] == "missing"
 
 
 def test_parse_records_empty_list() -> None:

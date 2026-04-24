@@ -214,3 +214,24 @@ def test_edge_cases_for_medical_institutions() -> None:
     
     # === 只有「醫學院」在名稱中 → 保留 ===
     assert is_educational_org("陽明醫學院") is True
+
+
+def test_direct_and_conditional_pass_rules_for_workstation_and_hci() -> None:
+    records = [
+        _bid("OVS-ES 教育版授權採購案", "某某大學"),
+        _bid("超融合設備採購案", "某某大學"),
+        _bid("工作站採購案", "某某大學"),
+        _bid("GPU 工作站採購案", "某某大學"),
+        _bid("人工智慧工作站採購案", "某某大學"),
+        _bid("高效能工作站採購案", "某某大學"),
+        _bid("虛擬化工作站採購案", "某某大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert "OVS-ES 教育版授權採購案" in output_titles
+    assert "超融合設備採購案" in output_titles
+    assert "工作站採購案" not in output_titles
+    assert "GPU 工作站採購案" in output_titles
+    assert "人工智慧工作站採購案" in output_titles
+    assert "高效能工作站採購案" in output_titles
+    assert "虛擬化工作站採購案" in output_titles

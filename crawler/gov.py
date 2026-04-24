@@ -29,9 +29,13 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     
     Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.
     """
+    degraded_block_mode = False
+
     # 🔥 Phase 2: 優先使用 Playwright+Stealth
     if settings.stealth_enabled and settings.enable_playwright:
         logger.info("gov_fetch_using_stealth")
+        blocked_attempts = 0
+        max_blocked_attempts = max(1, settings.gov_block_circuit_breaker_threshold)
         try:
             html = optional_playwright_fetch_html(
                 settings.gov_url, 
@@ -44,7 +48,14 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
                 logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "stealth"})
                 return records
         except Exception as exc:
+            blocked_attempts += _rate_limited_hits(exc)
             logger.warning("gov_stealth_failed_fallback_requests", extra={"error": str(exc)})
+            if blocked_attempts >= max_blocked_attempts:
+                degraded_block_mode = True
+                logger.warning(
+                    "gov_list_circuit_breaker_triggered",
+                    extra={"blocked_attempts": blocked_attempts, "threshold": max_blocked_attempts},
+                )
     
     # Fallback to requests+BeautifulSoup
     session = build_session(settings)
@@ -58,6 +69,9 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
         settings=settings,
     )
     records = _parse_records(html, settings, logger)
+    if settings.stealth_enabled and settings.enable_playwright and degraded_block_mode:
+        for record in records:
+            record.metadata["detail_fetch_mode"] = "degraded_blocked"
 
     if not records and settings.enable_playwright:
         logger.warning("gov_requests_empty_try_playwright")
@@ -81,6 +95,16 @@ def enrich_detail(records: list[BidRecord], settings: Settings, logger: Any) -> 
     gov_records = [r for r in records if r.source == SOURCE_NAME and r.url]
     if not gov_records:
         return
+
+    degraded_records = [r for r in gov_records if str(r.metadata.get("detail_fetch_mode", "")).strip() == "degraded_blocked"]
+    if degraded_records:
+        logger.warning(
+            "gov_detail_skip_degraded_blocked",
+            extra={"count": len(degraded_records), "reason": "list_fetch_blocked_circuit_breaker"},
+        )
+        gov_records = [r for r in gov_records if r not in degraded_records]
+        if not gov_records:
+            return
     
     # 🔥 Phase 1: 優先使用 Playwright+Stealth 批次抓取
     if settings.stealth_enabled and settings.enable_playwright:
@@ -177,6 +201,8 @@ def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: 
                 "reason": "detail page CAPTCHA block, falling back to list-page data",
             },
         )
+        for record in records:
+            record.metadata["detail_fetch_mode"] = "degraded_blocked"
         # Still mark the remaining as failed for logging
         for url in urls[2:]:
             result.failed.append((url, "skipped_after_probe_failure"))
@@ -392,6 +418,7 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
             summary=summary,
             metadata={
                 "raw_date": date_text,
+                "detail_fetch_mode": "full",
             },
         )
 
@@ -402,3 +429,15 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
         output.append(record)
     
     return output
+
+
+def _rate_limited_hits(exc: Exception) -> int:
+    import re
+
+    text = str(exc).lower()
+    if "rate_limited" not in text and "captcha" not in text:
+        return 0
+    match = re.search(r"rate_limited['\"]?\s*:\s*(\d+)", text)
+    if match:
+        return max(1, int(match.group(1)))
+    return 1

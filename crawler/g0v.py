@@ -82,7 +82,7 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
             })
             
             # Parse first page
-            records = _parse_records(records_data, logger)
+            records = _parse_records(records_data, logger, settings=settings)
             
             if records:
                 logger.info("source_parsed", extra={
@@ -106,7 +106,11 @@ def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
     return []
 
 
-def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidRecord]:
+def _parse_records(
+    records_data: list[dict[str, Any]],
+    logger: Any,
+    settings: Settings | None = None,
+) -> list[BidRecord]:
     """Parse g0v JSON records into BidRecord objects.
     
     Record structure:
@@ -132,15 +136,15 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
                 continue
             
             # Only process "公開招標公告" types (open bidding announcements)
-            tender_type = brief.get("type", "")
+            tender_type = _text_or_empty(brief.get("type"))
             if "公開招標" not in tender_type:
                 continue
             
-            title = brief.get("title", "").strip()
+            title = _text_or_empty(brief.get("title"))
             if not title:
                 continue
             
-            organization = (item.get("unit_name") or "").strip()
+            organization = _text_or_empty(item.get("unit_name"))
             
             # Parse announcement date (integer format YYYYMMDD)
             date_int = item.get("date")
@@ -148,12 +152,12 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
             announcement_date = parse_bid_date(date_str)
             
             # Extract category from brief
-            category = brief.get("category", "")
+            category = _text_or_empty(brief.get("category"))
             
             # Use tender_api_url for enrichment (machine), and openfun index URL for humans (email link).
-            raw_url = str(item.get("url") or "").strip()
+            raw_url = _text_or_empty(item.get("url"))
 
-            tender_api_url = str(item.get("tender_api_url") or "").strip()
+            tender_api_url = _text_or_empty(item.get("tender_api_url"))
             if tender_api_url.startswith("/"):
                 tender_api_url = f"{G0V_API_BASE}{tender_api_url}"
 
@@ -161,12 +165,13 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
             if not tender_api_url and raw_url.startswith("/api/"):
                 tender_api_url = f"{G0V_WEB_BASE}{raw_url}"
 
-            human_url = ""
-            if raw_url.startswith("/index/"):
-                human_url = f"{G0V_WEB_BASE}{raw_url}"
-            elif tender_api_url:
-                # Last resort: keep a clickable link even if it leads to JSON.
-                human_url = tender_api_url
+            unit_api_url = _text_or_empty(item.get("unit_api_url"))
+            if unit_api_url.startswith("/"):
+                unit_api_url = f"{G0V_WEB_BASE}{unit_api_url}"
+
+            human_url_mode = _text_or_empty(getattr(settings, "g0v_human_link_mode", "safe_only")).lower() or "safe_only"
+            human_url_state = _classify_human_url_state(raw_url)
+            human_url = _resolve_human_url(raw_url, tender_api_url, human_url_state, human_url_mode)
             
             # listbydate API doesn't include budget amount
             amount_text = ""
@@ -193,16 +198,27 @@ def _parse_records(records_data: list[dict[str, Any]], logger: Any) -> list[BidR
                         "g0v_unit_id": item.get("unit_id", ""),
                         "g0v_job_number": item.get("job_number", ""),
                         "g0v_tender_api_url": tender_api_url,
+                        "g0v_unit_api_url": unit_api_url,
                         "tender_api_url": tender_api_url,
                         "g0v_human_url": human_url,
+                        "g0v_human_url_state": human_url_state,
                     },
                 )
             )
         
         except Exception as exc:
+            raw_url = _text_or_empty(item.get("url"))
+            err_text = str(exc)
+            error_code = "parse_error"
+            if "NoneType" in err_text and "strip" in err_text:
+                error_code = "field_null"
+            elif raw_url and not raw_url.startswith("/index/case/") and not raw_url.startswith("/api/"):
+                error_code = "url_invalid"
             logger.warning("g0v_parse_item_failed", extra={
                 "error": str(exc), 
                 "job_number": item.get("job_number", "unknown"),
+                "error_code": error_code,
+                "url": raw_url,
             })
             continue
     
@@ -366,3 +382,33 @@ def _has_budget_or_bond(record: BidRecord) -> bool:
 def _is_missing_value(value: str) -> bool:
     text = value.strip().lower() if value else ""
     return text in {"", "none", "null", "無", "無提供", "n/a"}
+
+
+def _text_or_empty(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _classify_human_url_state(raw_url: str) -> str:
+    if not raw_url:
+        return "missing"
+    if raw_url.startswith("/index/case/"):
+        return "valid"
+    return "unsafe"
+
+
+def _resolve_human_url(
+    raw_url: str,
+    tender_api_url: str,
+    human_url_state: str,
+    human_url_mode: str,
+) -> str:
+    # Default mode is safe-only: only expose human-readable case page links.
+    if human_url_state == "valid":
+        return f"{G0V_WEB_BASE}{raw_url}"
+
+    # Compatibility mode can be enabled via G0V_HUMAN_LINK_MODE (non-safe values).
+    if human_url_mode != "safe_only" and tender_api_url:
+        return tender_api_url
+    return ""

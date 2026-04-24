@@ -67,13 +67,13 @@ class Settings:
     stealth_session_ttl_hours: float = 24.0
     stealth_session_dir: str = ""
     stealth_artifact_dir: str = ""
-    stealth_max_retries: int = 2
+    stealth_max_retries: int = 3
     stealth_headless: bool = True
-    stealth_throttle_delay_min: float = 2.0
-    stealth_throttle_delay_max: float = 6.0
-    stealth_throttle_cooldown_after: int = 5
-    stealth_throttle_cooldown_min: float = 8.0
-    stealth_throttle_cooldown_max: float = 15.0
+    stealth_throttle_delay_min: float = 3.0
+    stealth_throttle_delay_max: float = 8.0
+    stealth_throttle_cooldown_after: int = 3
+    stealth_throttle_cooldown_min: float = 12.0
+    stealth_throttle_cooldown_max: float = 25.0
     stealth_throttle_backoff_base: float = 5.0
 
     # --- Proxy ---
@@ -106,12 +106,14 @@ class Settings:
     gov_summary_selectors: list[str] = field(default_factory=lambda: [".summary", ".desc", "td:nth-child(4)"])
     gov_link_selectors: list[str] = field(default_factory=lambda: ["a"])
     gov_detail_delay_seconds: float = 2.0
-    gov_detail_max_per_identity: int = 3  # 🔥 Max requests per identity for detail pages
+    gov_detail_max_per_identity: int = 2  # 🔥 Max requests per identity for detail pages
+    gov_block_circuit_breaker_threshold: int = 2
 
     g0v_api_url: str = "https://pcc-api.openfun.app/api/listbydate"
     g0v_enabled: bool = True
     api_only_mode: bool = False
     g0v_notify_today_only: bool = True
+    g0v_human_link_mode: str = "safe_only"
 
     azure_storage_connection_string: str = ""
     azure_table_name: str = "BidNotifyState"
@@ -221,11 +223,15 @@ class Settings:
             or [".summary", ".desc", "td:nth-child(4)"],
             gov_link_selectors=_parse_csv(os.getenv("GOV_LINK_SELECTORS")) or ["a"],
             gov_detail_delay_seconds=_parse_float(os.getenv("GOV_DETAIL_DELAY_SECONDS"), 2.0),
-            gov_detail_max_per_identity=_parse_int(os.getenv("GOV_DETAIL_MAX_PER_IDENTITY"), 3),
+            gov_detail_max_per_identity=_parse_int(os.getenv("GOV_DETAIL_MAX_PER_IDENTITY"), 2),
+            gov_block_circuit_breaker_threshold=max(
+                1, _parse_int(os.getenv("GOV_BLOCK_CIRCUIT_BREAKER_THRESHOLD"), 2)
+            ),
             g0v_api_url=os.getenv("G0V_API_URL", "https://pcc-api.openfun.app/api/listbydate"),
             g0v_enabled=_parse_bool(os.getenv("G0V_ENABLED"), True),
             api_only_mode=_parse_bool(os.getenv("API_ONLY_MODE"), False),
             g0v_notify_today_only=_parse_bool(os.getenv("G0V_NOTIFY_TODAY_ONLY"), True),
+            g0v_human_link_mode=os.getenv("G0V_HUMAN_LINK_MODE", "safe_only").strip() or "safe_only",
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
             azure_table_name=os.getenv("AZURE_TABLE_NAME", "BidNotifyState"),
             azure_blob_container=os.getenv("AZURE_BLOB_CONTAINER", "bid-state"),
@@ -272,13 +278,13 @@ class Settings:
             stealth_session_ttl_hours=_parse_float(os.getenv("STEALTH_SESSION_TTL_HOURS"), 24.0),
             stealth_session_dir=os.getenv("STEALTH_SESSION_DIR", ""),
             stealth_artifact_dir=os.getenv("STEALTH_ARTIFACT_DIR", ""),
-            stealth_max_retries=_parse_int(os.getenv("STEALTH_MAX_RETRIES"), 2),
+            stealth_max_retries=_parse_int(os.getenv("STEALTH_MAX_RETRIES"), 3),
             stealth_headless=_parse_bool(os.getenv("STEALTH_HEADLESS"), True),
-            stealth_throttle_delay_min=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MIN"), 2.0),
-            stealth_throttle_delay_max=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MAX"), 6.0),
-            stealth_throttle_cooldown_after=_parse_int(os.getenv("STEALTH_THROTTLE_COOLDOWN_AFTER"), 5),
-            stealth_throttle_cooldown_min=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MIN"), 8.0),
-            stealth_throttle_cooldown_max=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MAX"), 15.0),
+            stealth_throttle_delay_min=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MIN"), 3.0),
+            stealth_throttle_delay_max=_parse_float(os.getenv("STEALTH_THROTTLE_DELAY_MAX"), 8.0),
+            stealth_throttle_cooldown_after=_parse_int(os.getenv("STEALTH_THROTTLE_COOLDOWN_AFTER"), 3),
+            stealth_throttle_cooldown_min=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MIN"), 12.0),
+            stealth_throttle_cooldown_max=_parse_float(os.getenv("STEALTH_THROTTLE_COOLDOWN_MAX"), 25.0),
             stealth_throttle_backoff_base=_parse_float(os.getenv("STEALTH_THROTTLE_BACKOFF_BASE"), 5.0),
             # --- Proxy ---
             proxy_enabled=_parse_bool(os.getenv("PROXY_ENABLED"), False),

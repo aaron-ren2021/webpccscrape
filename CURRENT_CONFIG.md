@@ -1,5 +1,10 @@
 # CURRENT_CONFIG
 
+## 版本資訊
+
+- Release: `v20260424-stable`
+- Lock Date: `2026-04-24` (Asia/Taipei)
+
 ## 生產真值（Local Cron）
 
 - 執行入口：`run_local.py`
