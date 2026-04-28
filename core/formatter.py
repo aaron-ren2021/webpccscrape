@@ -9,7 +9,7 @@ from core.filters import count_by_unit_type
 from core.models import BidRecord
 
 # Constants for bid bond free values
-_BOND_FREE_VALUES: frozenset[str] = frozenset({"0", "無", "無提供", "none", ""})
+_BOND_FREE_VALUES: frozenset[str] = frozenset({"0", "無", "none", "", "免繳"})
 
 
 def _parse_deadline_to_sort_key(s: str) -> tuple[int, int, int, int, int]:

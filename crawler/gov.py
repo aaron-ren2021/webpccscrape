@@ -351,11 +351,11 @@ def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
                 if val.startswith("否"):
                     record.bid_bond = "免繳"
                 else:
-                    pct_match = re.search(r"押標金額度[：:]\s*([\d,.]+%)", val)
+                    pct_match = re.search(r"押標金額度[：:]\s*(?:新臺幣\s*)?([\d,.]+%)", val)
                     if pct_match:
                         record.bid_bond = pct_match.group(1)
                     else:
-                        amt_match = re.search(r"押標金額度[：:]\s*([\d,]+)", val)
+                        amt_match = re.search(r"押標金額度[：:]\s*(?:新臺幣\s*)?([\d,]+)", val)
                         if amt_match:
                             record.bid_bond = f"NT$ {amt_match.group(1)} 元"
                         else:
