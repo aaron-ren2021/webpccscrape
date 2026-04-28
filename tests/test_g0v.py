@@ -34,12 +34,13 @@ def test_parse_records_valid_data() -> None:
     assert records[0].organization == "國立臺灣大學"
     assert records[0].source == "g0v"
     assert records[0].category == "資訊設備類"
-    assert records[0].url == "https://pcc-api.openfun.app/index/case/UNIT001/JOB001/20250407/TIQ-1-71000001"
+    assert records[0].url == ""
     assert records[0].bid_date is None
     assert records[0].announcement_date is not None
     assert records[0].announcement_date.isoformat() == "2025-04-07"
     assert records[0].metadata["job_number"] == "JOB001"
-    assert records[0].metadata["g0v_human_url_state"] == "valid"
+    assert records[0].metadata["g0v_human_url_state"] == "unresolved"
+    assert records[0].metadata["g0v_link_resolution_state"] == "unresolved"
     assert records[0].metadata["g0v_unit_api_url"] == "https://pcc-api.openfun.app/api/listbyunit?unit_id=UNIT001"
 
 
@@ -176,8 +177,8 @@ def test_parse_records_hide_unsafe_human_link_and_keep_api_backup() -> None:
     records = _parse_records(data, mock_logger)
 
     assert len(records) == 1
-    assert records[0].url == ""
-    assert records[0].metadata["g0v_human_url_state"] == "unsafe"
+    assert records[0].url.startswith("https://pcc-api.openfun.app/api/tender?")
+    assert records[0].metadata["g0v_human_url_state"] == "fallback_api"
     assert "api/tender?" in records[0].metadata["g0v_tender_api_url"]
 
 
@@ -206,7 +207,7 @@ def test_parse_records_none_fields_do_not_raise() -> None:
     assert records[0].organization == ""
     assert records[0].category == ""
     assert records[0].url == ""
-    assert records[0].metadata["g0v_human_url_state"] == "missing"
+    assert records[0].metadata["g0v_human_url_state"] == "unresolved"
 
 
 def test_parse_records_empty_list() -> None:
@@ -245,6 +246,41 @@ def test_extract_detail_fields_defaults_and_metadata() -> None:
     assert record.metadata["award_method"] == "最低標"
 
 
+def test_extract_detail_fields_reads_pcc_colon_keys() -> None:
+    record = BidRecord(
+        title="大王國中網路優化採購案",
+        organization="",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="g0v",
+        url="https://pcc-api.openfun.app/api/tender?unit_id=3.76.54&job_number=115200720099",
+    )
+    detail = {
+        "機關資料:機關名稱": "臺東縣政府",
+        "機關資料:聯絡人": "大王國中，承辦人：葛守仁先生",
+        "機關資料:聯絡電話": "(089)781324#240",
+        "採購資料:預算金額": "9,500,000元",
+        "採購資料:預算金額是否公開": "是",
+        "招標資料:決標方式": "最有利標",
+        "領投開標:截止投標": "115/05/11 17:00",
+        "領投開標:開標時間": "115/05/12 09:30",
+        "領投開標:是否須繳納押標金:押標金額度": "450,000",
+        "領投開標:是否須繳納押標金": "是，尚未提供廠商線上繳納押標金",
+    }
+
+    _extract_detail_fields(detail, record)
+
+    assert record.organization == "臺東縣政府"
+    assert record.budget_amount == "9,500,000元"
+    assert record.amount_value == 9_500_000
+    assert record.bid_bond == "450,000"
+    assert record.bid_deadline == "115/05/11 17:00"
+    assert record.bid_opening_time == "115/05/12 09:30"
+    assert record.metadata["contact_info"] == "大王國中，承辦人：葛守仁先生 (089)781324#240"
+    assert record.metadata["award_method"] == "最有利標"
+
+
 def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:
     record = BidRecord(
         title="測試案",
@@ -265,7 +301,17 @@ def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:
     mock_logger = MagicMock()
 
     mock_response = MagicMock()
-    mock_response.json.return_value = {"budget_amount": "1000000", "bid_bond": "10000"}
+    mock_response.json.return_value = {
+        "records": [
+            {
+                "detail": {
+                    "url": "https://web.pcc.gov.tw/tps/QueryTender/query/searchTenderDetail?pkPmsMain=AAA",
+                    "budget_amount": "1000000",
+                    "bid_bond": "10000",
+                }
+            }
+        ]
+    }
     mock_response.raise_for_status.return_value = None
 
     mock_session = MagicMock()
@@ -279,6 +325,8 @@ def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:
     assert record.metadata["enrichment_source"] == "g0v_api"
     assert record.metadata["enrichment_note"] == "g0v_tender_lookup:unit_id_job_number"
     assert "api/tender?" in record.metadata["g0v_tender_api_url"]
+    assert record.url.startswith("https://web.pcc.gov.tw/tps/")
+    assert record.metadata["g0v_link_resolution_state"] == "resolved_official"
 
 
 def test_enrich_record_skip_when_lookup_key_missing() -> None:
@@ -302,3 +350,36 @@ def test_enrich_record_skip_when_lookup_key_missing() -> None:
 
     assert enriched is False
     mock_session.get.assert_not_called()
+
+
+def test_enrich_record_fallbacks_to_tender_api_when_official_link_missing() -> None:
+    record = BidRecord(
+        title="測試案",
+        organization="某大學",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="g0v",
+        url="",
+        metadata={
+            "g0v_tender_api_url": "https://pcc-api.openfun.app/api/tender?unit_id=UNIT001&job_number=JOB001",
+        },
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.request_timeout_seconds = 30
+    mock_settings.g0v_human_link_mode = "safe_only"
+    mock_logger = MagicMock()
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"records": [{"detail": {"budget_public": False}}]}
+    mock_response.raise_for_status.return_value = None
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_response
+
+    enriched = enrich_record(record, mock_settings, mock_logger, session=mock_session)
+
+    assert enriched is True
+    assert record.url.startswith("https://pcc-api.openfun.app/api/tender?")
+    assert record.metadata["g0v_link_resolution_state"] == "fallback_api"

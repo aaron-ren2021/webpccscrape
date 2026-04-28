@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from core.config import Settings
 from core.models import BidRecord
-from core.normalize import parse_bid_date
+from core.normalize import parse_amount, parse_bid_date
 
 from crawler.common import build_session
 
@@ -159,7 +159,7 @@ def _parse_records(
 
             tender_api_url = _text_or_empty(item.get("tender_api_url"))
             if tender_api_url.startswith("/"):
-                tender_api_url = f"{G0V_API_BASE}{tender_api_url}"
+                tender_api_url = f"{G0V_WEB_BASE}{tender_api_url}"
 
             # Backward compatibility: older payloads may only provide a relative API path in `url`.
             if not tender_api_url and raw_url.startswith("/api/"):
@@ -170,8 +170,11 @@ def _parse_records(
                 unit_api_url = f"{G0V_WEB_BASE}{unit_api_url}"
 
             human_url_mode = _text_or_empty(getattr(settings, "g0v_human_link_mode", "safe_only")).lower() or "safe_only"
-            human_url_state = _classify_human_url_state(raw_url)
-            human_url = _resolve_human_url(raw_url, tender_api_url, human_url_state, human_url_mode)
+            human_url, link_resolution_state = _resolve_initial_human_url(
+                raw_url=raw_url,
+                tender_api_url=tender_api_url,
+                human_url_mode=human_url_mode,
+            )
             
             # listbydate API doesn't include budget amount
             amount_text = ""
@@ -200,8 +203,11 @@ def _parse_records(
                         "g0v_tender_api_url": tender_api_url,
                         "g0v_unit_api_url": unit_api_url,
                         "tender_api_url": tender_api_url,
+                        "g0v_raw_url": raw_url,
                         "g0v_human_url": human_url,
-                        "g0v_human_url_state": human_url_state,
+                        # Keep legacy key for backward compatibility with formatter/tests.
+                        "g0v_human_url_state": link_resolution_state,
+                        "g0v_link_resolution_state": link_resolution_state,
                     },
                 )
             )
@@ -250,6 +256,11 @@ def enrich_record(
     """
     tender_api_url, lookup_mode = _resolve_tender_api_url(record)
     if not tender_api_url:
+        _apply_human_url_resolution(
+            record,
+            resolved_url="",
+            state="unresolved",
+        )
         return False
 
     if record.metadata.get("g0v_tender_api_url") != tender_api_url:
@@ -261,9 +272,16 @@ def enrich_record(
     try:
         response = client.get(tender_api_url, timeout=timeout_seconds)
         response.raise_for_status()
-        detail = response.json()
+        payload = response.json()
+        detail = _extract_detail_payload(payload)
 
         _extract_detail_fields(detail, record, logger)
+        _resolve_human_url_from_detail(
+            record=record,
+            detail=detail,
+            tender_api_url=tender_api_url,
+            human_url_mode=_text_or_empty(getattr(settings, "g0v_human_link_mode", "safe_only")).lower() or "safe_only",
+        )
 
         enriched = _has_budget_or_bond(record)
         if enriched:
@@ -275,6 +293,12 @@ def enrich_record(
             record.metadata["enrichment_note"] = f"g0v_tender_lookup:{lookup_mode}"
         return enriched
     except Exception as exc:
+        # Keep link clickable even when detail enrichment fails.
+        _apply_human_url_resolution(
+            record,
+            resolved_url=tender_api_url,
+            state="fallback_api",
+        )
         logger.warning(
             "g0v_detail_fetch_failed",
             extra={
@@ -297,45 +321,83 @@ def _extract_detail_fields(
     if not isinstance(detail, dict):
         return
     
-    # Try to extract budget amount
-    budget = _pick_text(detail, ["預算金額", "budget_amount", "budget"])
+    # Try to extract budget amount. The g0v tender API mirrors PCC detail labels
+    # as colon-delimited keys, e.g. "採購資料:預算金額".
+    budget = _pick_text(detail, ["採購資料:預算金額", "預算金額", "budget_amount", "budget"])
     if budget:
         record.amount_raw = budget
+        record.amount_value = parse_amount(budget)
         record.budget_amount = budget
-    elif detail.get("budget_public") is False and not record.budget_amount:
+    elif (
+        detail.get("budget_public") is False
+        or _is_no_value(_pick_text(detail, ["採購資料:預算金額是否公開", "預算金額是否公開"]))
+    ) and not record.budget_amount:
         record.budget_amount = "未公開"
     elif not record.budget_amount:
         record.budget_amount = "無提供"
     
     # Extract bid bond (押標金)
-    bond = _pick_text(detail, ["押標金額", "bid_bond", "bidBond"])
+    bond = _pick_text(
+        detail,
+        [
+            "領投開標:是否須繳納押標金:押標金額度",
+            "押標金額度",
+            "押標金額",
+            "bid_bond",
+            "bidBond",
+        ],
+    )
     if bond:
         record.bid_bond = bond
+    elif _is_no_value(_pick_text(detail, ["領投開標:是否須繳納押標金", "是否須繳納押標金"])):
+        record.bid_bond = "免繳"
     elif not record.bid_bond:
         record.bid_bond = "無提供"
     
     # Extract bid deadline
-    deadline = _pick_text(detail, ["截止投標", "bid_deadline", "deadline"])
+    deadline = _pick_text(detail, ["領投開標:截止投標", "截止投標", "bid_deadline", "deadline"])
     if deadline:
         record.bid_deadline = deadline
     elif not record.bid_deadline:
         record.bid_deadline = "無提供"
     
     # Extract opening time
-    opening = _pick_text(detail, ["開標時間", "bid_opening_time", "opening_time"])
+    opening = _pick_text(detail, ["領投開標:開標時間", "開標時間", "bid_opening_time", "opening_time"])
     if opening:
         record.bid_opening_time = opening
     elif not record.bid_opening_time:
         record.bid_opening_time = "無提供"
     
     # Extract contact info (if available)
-    contact = _pick_text(detail, ["聯絡資訊", "contact_info", "contact"])
+    contact = _pick_text(detail, ["機關資料:聯絡人", "聯絡資訊", "contact_info", "contact"])
     if contact:
-        record.metadata["contact_info"] = contact
+        phone = _pick_text(detail, ["機關資料:聯絡電話", "聯絡電話", "phone"])
+        record.metadata["contact_info"] = f"{contact} {phone}".strip()
 
-    award_method = _pick_text(detail, ["決標方式", "award_method", "awardMethod"])
+    award_method = _pick_text(detail, ["招標資料:決標方式", "決標方式", "award_method", "awardMethod"])
     if award_method:
         record.metadata["award_method"] = award_method
+
+    if not record.organization:
+        organization = _pick_text(detail, ["機關資料:機關名稱", "機關資料:單位名稱", "unit_name"])
+        if organization:
+            record.organization = organization
+
+
+def _extract_detail_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize API response to the detail object used by field extraction."""
+    if not isinstance(payload, dict):
+        return {}
+
+    records = payload.get("records")
+    if isinstance(records, list) and records:
+        first = records[0]
+        if isinstance(first, dict):
+            detail = first.get("detail")
+            if isinstance(detail, dict):
+                return detail
+            return first
+    return payload
 
 
 def _pick_text(data: dict[str, Any], keys: list[str]) -> str:
@@ -384,31 +446,73 @@ def _is_missing_value(value: str) -> bool:
     return text in {"", "none", "null", "無", "無提供", "n/a"}
 
 
+def _is_no_value(value: str) -> bool:
+    text = value.strip().lower() if value else ""
+    return text.startswith("否") or text in {"no", "false", "0"}
+
+
 def _text_or_empty(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
 
 
-def _classify_human_url_state(raw_url: str) -> str:
-    if not raw_url:
-        return "missing"
-    if raw_url.startswith("/index/case/"):
-        return "valid"
-    return "unsafe"
-
-
-def _resolve_human_url(
+def _resolve_initial_human_url(
     raw_url: str,
     tender_api_url: str,
-    human_url_state: str,
     human_url_mode: str,
-) -> str:
-    # Default mode is safe-only: only expose human-readable case page links.
-    if human_url_state == "valid":
-        return f"{G0V_WEB_BASE}{raw_url}"
+) -> tuple[str, str]:
+    """Resolve initial human URL from list API payload.
 
-    # Compatibility mode can be enabled via G0V_HUMAN_LINK_MODE (non-safe values).
-    if human_url_mode != "safe_only" and tender_api_url:
-        return tender_api_url
-    return ""
+    `/index/case/...` is currently unreliable and can return a 404 error page with HTTP 200.
+    So we do not trust it as a clickable primary link. We resolve to official link later
+    via tender detail API, and keep API URL as fallback.
+    """
+    if tender_api_url:
+        return tender_api_url, "fallback_api"
+
+    if human_url_mode != "safe_only" and raw_url.startswith("/api/"):
+        return f"{G0V_WEB_BASE}{raw_url}", "fallback_api"
+
+    return "", "unresolved"
+
+
+def _resolve_human_url_from_detail(
+    *,
+    record: BidRecord,
+    detail: dict[str, Any],
+    tender_api_url: str,
+    human_url_mode: str,
+) -> None:
+    official_url = _text_or_empty(detail.get("url"))
+    if official_url.startswith("/"):
+        official_url = f"{G0V_WEB_BASE}{official_url}"
+
+    if official_url.startswith("http://") or official_url.startswith("https://"):
+        if "web.pcc.gov.tw" in official_url:
+            _apply_human_url_resolution(record, resolved_url=official_url, state="resolved_official")
+            return
+
+    if tender_api_url:
+        _apply_human_url_resolution(record, resolved_url=tender_api_url, state="fallback_api")
+        return
+
+    if human_url_mode != "safe_only":
+        raw_url = _text_or_empty(record.metadata.get("g0v_raw_url", ""))
+        if raw_url.startswith("/api/"):
+            _apply_human_url_resolution(
+                record,
+                resolved_url=f"{G0V_WEB_BASE}{raw_url}",
+                state="fallback_api",
+            )
+            return
+
+    _apply_human_url_resolution(record, resolved_url="", state="unresolved")
+
+
+def _apply_human_url_resolution(record: BidRecord, resolved_url: str, state: str) -> None:
+    record.url = resolved_url
+    record.metadata["g0v_human_url"] = resolved_url
+    # Keep legacy key for compatibility.
+    record.metadata["g0v_human_url_state"] = state
+    record.metadata["g0v_link_resolution_state"] = state

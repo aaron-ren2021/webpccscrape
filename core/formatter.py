@@ -222,6 +222,12 @@ def _render_card(index: int, record: BidRecord) -> str:
     if bid_bond_raw.lower() in _BOND_FREE_VALUES:
         bid_bond = '<div style="font-size:13px;color:#27500a;">免繳納</div>'
         is_free = True
+    elif bid_bond_raw and bid_bond_raw != "需繳納":
+        bid_bond = (
+            f'<div style="font-size:13px;font-weight:600;color:#6b7280;">'
+            f'{escape(bid_bond_raw)}</div>'
+        )
+        is_free = False
     else:
         bid_bond = '<div style="font-size:13px;color:#6b7280;">需繳納</div>'
         is_free = False
@@ -261,19 +267,26 @@ def _render_card(index: int, record: BidRecord) -> str:
         source_text = f"{record.source}(備份)"
 
     is_g0v = "g0v" in source_text.lower()
-    g0v_human_state = str(metadata.get("g0v_human_url_state", "")).strip().lower()
+    g0v_link_state = str(
+        metadata.get("g0v_link_resolution_state", metadata.get("g0v_human_url_state", ""))
+    ).strip().lower()
 
     # Link
     raw_link = (record.url or "").strip()
     is_http_link = raw_link.startswith("http://") or raw_link.startswith("https://")
     if is_http_link:
         safe_link = escape(raw_link)
+        link_label = "&#128196; 查看詳情"
+        if is_g0v and g0v_link_state == "resolved_official":
+            link_label = "&#128196; 查看詳情（官方頁）"
+        elif is_g0v and g0v_link_state == "fallback_api":
+            link_label = "&#128279; 來源 API（備援）"
         link_html = (
             f'<a href="{safe_link}" target="_blank" rel="noreferrer"'
             f' style="display:inline-block;padding:3px 10px;border-radius:4px;'
             f'font-size:11px;text-decoration:none;'
             f'background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;">'
-            f'&#128196; 查看詳情</a>'
+            f'{link_label}</a>'
         )
     else:
         backup_links: list[str] = []
@@ -310,7 +323,7 @@ def _render_card(index: int, record: BidRecord) -> str:
     else:
         source_display = source_text
     source_note = ""
-    if is_g0v and g0v_human_state and g0v_human_state != "valid":
+    if is_g0v and g0v_link_state == "unresolved":
         source_note = '<div style="font-size:11px;color:#b45309;margin-top:4px;">資料連結暫不可用</div>'
 
     # Shared cell styles
