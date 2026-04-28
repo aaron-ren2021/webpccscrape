@@ -23,6 +23,9 @@ class DayStats:
     keyword_high: int | None = None
     keyword_boundary: int | None = None
     keyword_included_total: int | None = None
+    bid_bond_unparsed_count: int = 0
+    bid_bond_unparsed_sample_count: int = 0
+    bid_bond_unparsed_top_patterns: list[dict[str, Any]] = field(default_factory=list)
     embedding_applied_runs: int = 0
     embedding_recall_done_runs: int = 0
     embedding_candidates_total: int = 0
@@ -76,6 +79,42 @@ def _extract_result_dict(extra: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _extract_literal(extra: str, key: str) -> Any | None:
+    anchor = f"{key}="
+    start = extra.find(anchor)
+    if start < 0:
+        return None
+
+    payload = extra[start + len(anchor):].lstrip()
+    if not payload:
+        return None
+
+    opener = payload[0]
+    if opener not in {"{", "["}:
+        return None
+    closer = "}" if opener == "{" else "]"
+
+    depth = 0
+    end_idx = None
+    for idx, ch in enumerate(payload):
+        if ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                end_idx = idx + 1
+                break
+
+    if end_idx is None:
+        return None
+
+    raw = payload[:end_idx]
+    try:
+        return ast.literal_eval(raw)
+    except Exception:
+        return None
+
+
 def _build_summary(path: Path) -> dict[str, DayStats]:
     summary: dict[str, DayStats] = defaultdict(DayStats)
     if not path.exists():
@@ -115,6 +154,16 @@ def _build_summary(path: Path) -> dict[str, DayStats]:
                 recalled = _extract_number(extra, "recalled") or 0
                 s.embedding_candidates_total += original
                 s.embedding_recalled_total += recalled
+            elif event == "bid_bond_unparsed_summary":
+                count = _extract_number(extra, "unparsed_count")
+                if count is not None:
+                    s.bid_bond_unparsed_count = count
+                sample_count = _extract_number(extra, "sample_count")
+                if sample_count is not None:
+                    s.bid_bond_unparsed_sample_count = sample_count
+                top_patterns = _extract_literal(extra, "top_patterns")
+                if isinstance(top_patterns, list):
+                    s.bid_bond_unparsed_top_patterns = top_patterns
             elif event == "embedding_recall_done":
                 s.embedding_recall_done_runs += 1
                 candidates = _extract_number(extra, "candidate_count")
@@ -207,6 +256,12 @@ def _render_text(days: list[str], summary: dict[str, DayStats], zero_recall_warn
             f"timeout_warn:{s.embedding_duration_warnings} "
             f"memory_warn:{s.embedding_memory_warnings}"
         )
+        lines.append(
+            "  bid_bond_unparsed="
+            f"count:{s.bid_bond_unparsed_count} "
+            f"samples:{s.bid_bond_unparsed_sample_count} "
+            f"top:{_format_top_patterns(s.bid_bond_unparsed_top_patterns)}"
+        )
         if s.failure_events:
             lines.append("  failures=" + ",".join(sorted(s.failure_events)))
 
@@ -219,6 +274,22 @@ def _render_text(days: list[str], summary: dict[str, DayStats], zero_recall_warn
         )
 
     return "\n".join(lines)
+
+
+def _format_top_patterns(patterns: list[dict[str, Any]], limit: int = 3) -> str:
+    if not patterns:
+        return "-"
+    output: list[str] = []
+    for item in patterns[:limit]:
+        raw = str(item.get("raw", "")).strip()
+        count = item.get("count")
+        if not raw:
+            continue
+        if isinstance(count, int):
+            output.append(f"{raw}({count})")
+        else:
+            output.append(raw)
+    return ", ".join(output) if output else "-"
 
 
 def main() -> int:
@@ -253,6 +324,9 @@ def main() -> int:
                     "keyword_high": summary[d].keyword_high,
                     "keyword_boundary": summary[d].keyword_boundary,
                     "keyword_included_total": summary[d].keyword_included_total,
+                    "bid_bond_unparsed_count": summary[d].bid_bond_unparsed_count,
+                    "bid_bond_unparsed_sample_count": summary[d].bid_bond_unparsed_sample_count,
+                    "bid_bond_unparsed_top_patterns": summary[d].bid_bond_unparsed_top_patterns,
                     "embedding_candidates_total": summary[d].embedding_candidates_total,
                     "embedding_recalled_total": summary[d].embedding_recalled_total,
                     "embedding_ab_summary_count": summary[d].embedding_ab_summary_count,

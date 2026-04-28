@@ -183,6 +183,7 @@ EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 每日巡檢（`logs/cron.log`）重點事件：
 - `local_run_finished`：`crawled_count/filtered_count/deduped_count/new_count/source_success_count/source_failed_count`
 - `keyword_screen_distribution`：`high_confidence/boundary/included_total`
+- `bid_bond_unparsed_summary`：`unparsed_count/top_patterns/sample_count`
 - `embedding_recall_pipeline_step`：`duration_ms/memory_mb/model_name/threshold/top_k`
 - `embedding_recall_done`：`candidate_count/recalled/result_count`
 - `embedding_duration_warning`、`embedding_memory_warning`、`embedding_model_load_failed`
@@ -191,6 +192,12 @@ EMBEDDING_ZERO_RECALL_WARN_DAYS=3
 
 ```bash
 python summarize_cron_log.py --log-file logs/cron.log --days 7
+```
+
+若需要每日彙總輸出（可選）：
+
+```bash
+python summarize_cron_log.py --log-file logs/cron.log --days 1 >> logs/cron_summary.log 2>&1
 ```
 
 若需要旁路 A/B 比較，查看：
@@ -240,6 +247,7 @@ func azure functionapp publish <functionAppName>
 - Playwright：`ENABLE_PLAYWRIGHT`
 - Embedding：`ENABLE_EMBEDDING_RECALL`、`EMBEDDING_MODEL`、`EMBEDDING_TOP_K`、`EMBEDDING_SIMILARITY_THRESHOLD`
 - Embedding A/B：`EMBEDDING_ENABLE_AB_TEST`、`EMBEDDING_AB_MODEL`、`EMBEDDING_AB_SIMILARITY_THRESHOLD`、`EMBEDDING_AB_TOP_K`
+- 押標金未解析監控：`BID_BOND_UNPARSED_SAMPLE_SIZE`、`BID_BOND_UNPARSED_RAW_TRUNCATE`、`BID_BOND_UNPARSED_TOP_N`
 
 ## 9. 常見故障排除
 1. 抓不到資料

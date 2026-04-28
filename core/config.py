@@ -83,6 +83,9 @@ class Settings:
 
     recent_days: int = 1
     high_amount_threshold: float = 5_000_000.0
+    bid_bond_unparsed_sample_size: int = 5
+    bid_bond_unparsed_raw_truncate: int = 80
+    bid_bond_unparsed_top_n: int = 5
 
     taiwanbuying_url: str = "https://www.taiwanbuying.com.tw/"
     taiwanbuying_method: str = "GET"
@@ -189,6 +192,9 @@ class Settings:
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),
             high_amount_threshold=_parse_float(os.getenv("HIGH_AMOUNT_THRESHOLD"), 5_000_000.0),
+            bid_bond_unparsed_sample_size=_parse_int(os.getenv("BID_BOND_UNPARSED_SAMPLE_SIZE"), 5),
+            bid_bond_unparsed_raw_truncate=_parse_int(os.getenv("BID_BOND_UNPARSED_RAW_TRUNCATE"), 80),
+            bid_bond_unparsed_top_n=_parse_int(os.getenv("BID_BOND_UNPARSED_TOP_N"), 5),
             taiwanbuying_url=os.getenv("TAIWANBUYING_URL", "https://www.taiwanbuying.com.tw/"),
             taiwanbuying_method=os.getenv("TAIWANBUYING_METHOD", "GET").upper(),
             taiwanbuying_params=_parse_json(os.getenv("TAIWANBUYING_PARAMS_JSON")),

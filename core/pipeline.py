@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from crawler.gov import fetch_bids as fetch_gov_bids
 from crawler.gov import enrich_detail as enrich_gov_detail
 from crawler.taiwanbuying import fetch_bids as fetch_taiwanbuying_bids
 from crawler.g0v import fetch_bids as fetch_g0v_bids
+from crawler.g0v import enrich_record as enrich_g0v_record
 from core.ai_classifier import AIClassification, build_ai_clients, classify_bids_batch
 from core.config import Settings
 from core.dedup import deduplicate_bids
@@ -21,6 +23,7 @@ from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
 from storage.table_store import TableStateStore
+from crawler.common import build_session
 
 
 class InMemoryStateStore:
@@ -83,6 +86,36 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
         except Exception as exc:
             logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+
+        summary = _build_bid_bond_unparsed_summary(gov_records, settings)
+        logger.info("bid_bond_unparsed_summary", extra=summary)
+
+    g0v_records = [r for r in deduped if r.source == "g0v"]
+    g0v_link_counts = {
+        "resolved_official": 0,
+        "fallback_api": 0,
+        "unresolved": 0,
+    }
+    if g0v_records:
+        try:
+            session = build_session(settings)
+            for record in g0v_records:
+                enrich_g0v_record(record, settings, logger, session=session)
+                state = str(record.metadata.get("g0v_link_resolution_state", "")).strip().lower()
+                if state not in g0v_link_counts:
+                    state = "unresolved"
+                g0v_link_counts[state] += 1
+            logger.info(
+                "g0v_link_resolution_summary",
+                extra={
+                    "count": len(g0v_records),
+                    "g0v_link_resolved_count": g0v_link_counts["resolved_official"],
+                    "g0v_link_fallback_api_count": g0v_link_counts["fallback_api"],
+                    "g0v_link_unresolved_count": g0v_link_counts["unresolved"],
+                },
+            )
+        except Exception as exc:
+            logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
 
     # --- Phase 2: AI-enhanced classification (optional) ---
     ai_enabled = getattr(settings, 'enable_ai_classification', False)
@@ -210,6 +243,77 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         notification_sent=notification_sent,
         notification_backend=notification_backend,
         errors=errors,
+    )
+
+
+def _build_bid_bond_unparsed_summary(
+    records: list[BidRecord],
+    settings: Settings,
+) -> dict[str, Any]:
+    unparsed_defaults = {"需繳納", "未公開"}
+    unparsed_records: list[BidRecord] = []
+
+    for record in records:
+        raw = str(record.metadata.get("bid_bond_raw", "")).strip()
+        if not raw:
+            continue
+        bid_bond = (record.bid_bond or "").strip()
+        if not bid_bond or bid_bond in unparsed_defaults:
+            unparsed_records.append(record)
+
+    raw_limit = max(settings.bid_bond_unparsed_raw_truncate, 0)
+    sample_size = max(settings.bid_bond_unparsed_sample_size, 0)
+    top_n = max(settings.bid_bond_unparsed_top_n, 0)
+
+    raw_counter: Counter[str] = Counter()
+    for record in unparsed_records:
+        raw_value = _sanitize_bid_bond_raw(
+            str(record.metadata.get("bid_bond_raw", "")),
+            raw_limit,
+        )
+        if raw_value:
+            raw_counter[raw_value] += 1
+
+    top_patterns: list[dict[str, Any]] = []
+    if top_n > 0:
+        for raw, count in raw_counter.most_common(top_n):
+            top_patterns.append({"raw": raw, "count": count})
+
+    samples: list[dict[str, Any]] = []
+    if sample_size > 0:
+        for record in unparsed_records[:sample_size]:
+            raw_value = _sanitize_bid_bond_raw(
+                str(record.metadata.get("bid_bond_raw", "")),
+                raw_limit,
+            )
+            samples.append(
+                {
+                    "title": record.title[:200],
+                    "organization": record.organization[:120],
+                    "url": record.url,
+                    "bid_bond_raw": raw_value,
+                    "bid_bond": record.bid_bond,
+                }
+            )
+
+    return {
+        "unparsed_count": len(unparsed_records),
+        "top_patterns": top_patterns,
+        "sample_count": len(samples),
+        "samples": samples,
+    }
+
+
+def _sanitize_bid_bond_raw(value: str, limit: int) -> str:
+    cleaned = value.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    cleaned = " ".join(cleaned.split())
+    if limit > 0:
+        cleaned = cleaned[:limit]
+    return (
+        cleaned.replace("[", "(")
+        .replace("]", ")")
+        .replace("{", "(")
+        .replace("}", ")")
     )
 
 

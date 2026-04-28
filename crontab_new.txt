@@ -3,3 +3,6 @@
 
 # webpccscrape 標案監控排程（8:35）
 30 8 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
+
+# webpccscrape 每日彙總（9:00）
+00 9 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python summarize_cron_log.py --log-file logs/cron.log --days 1 >> /home/xcloud/project/webpccscrape/logs/cron_summary.log 2>&1
