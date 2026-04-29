@@ -18,7 +18,7 @@ from core.dedup import deduplicate_bids
 from core.filters import filter_bids
 from core.formatter import find_earliest_deadline, render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
-from core.normalize import build_bid_uid
+from core.normalize import build_bid_uid, is_bid_deadline_expired
 from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
@@ -117,21 +117,23 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         except Exception as exc:
             logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
 
+    active_records = _exclude_expired_deadline_records(deduped, now_tw, logger)
+
     # --- Phase 2: AI-enhanced classification (optional) ---
     ai_enabled = getattr(settings, 'enable_ai_classification', False)
-    if ai_enabled and deduped:
+    if ai_enabled and active_records:
         try:
             openai_client, anthropic_client = build_ai_clients(settings)
             if openai_client or anthropic_client:
                 ai_model = getattr(settings, 'ai_model', '')
                 classifications = classify_bids_batch(
-                    deduped,
+                    active_records,
                     openai_client=openai_client,
                     anthropic_client=anthropic_client,
                     model=ai_model,
                     log=logger,
                 )
-                for record, cls in zip(deduped, classifications):
+                for record, cls in zip(active_records, classifications):
                     record.ai_edu_score = cls.edu_score
                     record.ai_it_score = cls.it_score
                     record.ai_priority = cls.priority
@@ -153,7 +155,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
 
     recent_cutoff = today - timedelta(days=max(settings.recent_days, 1))
     new_records: list[BidRecord] = []
-    for record in deduped:
+    for record in active_records:
         if record.uid in notified_keys:
             continue
 
@@ -244,6 +246,28 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         notification_backend=notification_backend,
         errors=errors,
     )
+
+
+def _exclude_expired_deadline_records(
+    records: list[BidRecord],
+    now_tw: datetime,
+    logger: Any,
+) -> list[BidRecord]:
+    active_records: list[BidRecord] = []
+    for record in records:
+        deadline = (record.bid_deadline or "").strip()
+        if deadline and is_bid_deadline_expired(deadline, now_tw):
+            logger.info(
+                "expired_bid_deadline_skipped",
+                extra={
+                    "title": record.title,
+                    "deadline": deadline,
+                    "source": record.source,
+                },
+            )
+            continue
+        active_records.append(record)
+    return active_records
 
 
 def _build_bid_bond_unparsed_summary(

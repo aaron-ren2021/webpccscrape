@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime, time
 from typing import Optional
 
 from dateutil import parser as dt_parser
@@ -11,6 +11,9 @@ from dateutil import parser as dt_parser
 PUNCT_OR_SPACE_PATTERN = re.compile(r"[\s\u3000]+")
 DIGIT_PATTERN = re.compile(r"([0-9][0-9,\.]*)")
 ROC_DATE_PATTERN = re.compile(r"(?P<y>\d{2,3})\s*[年\/-]\s*(?P<m>\d{1,2})\s*[月\/-]\s*(?P<d>\d{1,2})")
+DEADLINE_DATE_PATTERN = re.compile(r"(?P<y>\d{2,4})\s*[年\/-]\s*(?P<m>\d{1,2})\s*[月\/-]\s*(?P<d>\d{1,2})")
+DEADLINE_TIME_PATTERN = re.compile(r"(?P<h>\d{1,2})\s*[:：]\s*(?P<mi>\d{1,2})")
+MISSING_DEADLINE_VALUES = {"", "無", "無提供", "未提供", "詳見連結", "none", "null", "n/a"}
 
 
 def normalize_text(value: str) -> str:
@@ -86,6 +89,52 @@ def parse_bid_date(value: str) -> Optional[date]:
         return parsed.date()
     except (ValueError, OverflowError):
         return None
+
+
+def parse_bid_deadline_text(value: str) -> Optional[tuple[date, time | None]]:
+    if not value:
+        return None
+
+    text = unicodedata.normalize("NFKC", value).strip()
+    if text.lower() in MISSING_DEADLINE_VALUES:
+        return None
+
+    date_match = DEADLINE_DATE_PATTERN.search(text)
+    if not date_match:
+        return None
+
+    year_raw = int(date_match.group("y"))
+    year = year_raw + 1911 if year_raw < 1911 else year_raw
+    month = int(date_match.group("m"))
+    day = int(date_match.group("d"))
+
+    try:
+        deadline_date = date(year, month, day)
+    except ValueError:
+        return None
+
+    deadline_time: time | None = None
+    time_match = DEADLINE_TIME_PATTERN.search(text[date_match.end():])
+    if time_match:
+        try:
+            deadline_time = time(int(time_match.group("h")), int(time_match.group("mi")))
+        except ValueError:
+            deadline_time = None
+
+    return deadline_date, deadline_time
+
+
+def is_bid_deadline_expired(value: str, now_tw: datetime) -> bool:
+    parsed = parse_bid_deadline_text(value)
+    if not parsed:
+        return False
+
+    deadline_date, deadline_time = parsed
+    if deadline_time is None:
+        return deadline_date < now_tw.date()
+
+    deadline_at = datetime.combine(deadline_date, deadline_time, tzinfo=now_tw.tzinfo)
+    return deadline_at < now_tw
 
 
 def amount_key(value: Optional[float], raw: str = "") -> str:
