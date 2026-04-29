@@ -281,6 +281,29 @@ def test_extract_detail_fields_reads_pcc_colon_keys() -> None:
     assert record.metadata["award_method"] == "最有利標"
 
 
+def test_extract_detail_fields_bid_bond_ignores_online_payment_fee() -> None:
+    record = BidRecord(
+        title="國防醫學大學測試案",
+        organization="",
+        bid_date=None,
+        amount_raw="",
+        amount_value=None,
+        source="g0v",
+        url="",
+    )
+    detail = {
+        "領投開標:是否須繳納押標金": (
+            "是，且提供廠商線上繳納押標金 "
+            "押標金額度：標價之一定比率：按廠商報價總金額百分之3繳交。 "
+            "廠商線上繳納押標金手續費：10元"
+        ),
+    }
+
+    _extract_detail_fields(detail, record)
+
+    assert record.bid_bond == "3%"
+
+
 def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:
     record = BidRecord(
         title="測試案",

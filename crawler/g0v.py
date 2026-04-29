@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import re
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -16,6 +17,40 @@ SOURCE_NAME = "g0v"
 # g0v API base URL (new version)
 G0V_API_BASE = "https://pcc-api.openfun.app/api"
 G0V_WEB_BASE = "https://pcc-api.openfun.app"
+
+
+def _parse_bid_bond_text(value: str, *, preserve_plain_value: bool = False) -> str:
+    """Extract bid bond amount/ratio from PCC text, excluding payment fee text."""
+    text = value.replace("\u3000", " ").strip()
+    if not text:
+        return ""
+    if _is_no_value(text):
+        return "免繳"
+
+    amount_text = text
+    label_match = re.search(r"押標金額度[：:\s]*", amount_text)
+    if label_match:
+        amount_text = amount_text[label_match.end():]
+    amount_text = re.split(r"(?:廠商線上繳納押標金)?手續費[：:：\s]*", amount_text, maxsplit=1)[0].strip()
+
+    pct_match = re.search(r"百分之\s*([\d,.]+)", amount_text) or re.search(r"([\d,.]+)\s*[%％]", amount_text)
+    if pct_match:
+        return f"{pct_match.group(1).strip()}%"
+
+    amount_patterns = [
+        r"(?:新臺?幣|NT\$?)\s*([\d,]+)\s*元?",
+        r"([\d,]+)\s*元(?:整)?",
+    ]
+    for pat in amount_patterns:
+        amt_match = re.search(pat, amount_text)
+        if amt_match:
+            return amt_match.group(1)
+
+    if preserve_plain_value and amount_text and "手續費" not in text:
+        return amount_text
+    if text.startswith("是"):
+        return "需繳納"
+    return ""
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
@@ -336,20 +371,33 @@ def _extract_detail_fields(
     elif not record.budget_amount:
         record.budget_amount = "無提供"
     
-    # Extract bid bond (押標金)
-    bond = _pick_text(
+    # Extract bid bond (押標金). Some PCC/g0v payloads include online payment fee
+    # near the bid-bond fields; never use that fee as the bond amount.
+    bond = _parse_bid_bond_text(
+        _pick_text(
+            detail,
+            [
+                "領投開標:是否須繳納押標金:押標金額度",
+                "押標金額度",
+                "押標金額",
+                "bid_bond",
+                "bidBond",
+            ],
+        ),
+        preserve_plain_value=True,
+    )
+    bond_status = _pick_text(
         detail,
         [
-            "領投開標:是否須繳納押標金:押標金額度",
-            "押標金額度",
-            "押標金額",
-            "bid_bond",
-            "bidBond",
+            "領投開標:是否須繳納押標金",
+            "是否須繳納押標金",
         ],
     )
+    if not bond or bond == "需繳納":
+        bond = _parse_bid_bond_text(bond_status)
     if bond:
         record.bid_bond = bond
-    elif _is_no_value(_pick_text(detail, ["領投開標:是否須繳納押標金", "是否須繳納押標金"])):
+    elif _is_no_value(bond_status):
         record.bid_bond = "免繳"
     elif not record.bid_bond:
         record.bid_bond = "無提供"

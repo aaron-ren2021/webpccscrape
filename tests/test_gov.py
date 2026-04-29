@@ -151,3 +151,41 @@ def test_enrich_detail_skips_when_degraded_blocked(monkeypatch):
     enrich_detail(records, settings, logger)
 
     assert called["stealth"] == 0
+
+
+def test_extract_detail_fields_bond_variations():
+    """Test various formats of bid bond extraction."""
+    with open("tests/data/test_gov_detail_bond.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    soup = parse_html(html_content)
+
+    # Case 1: Fixed Amount
+    case1_soup = soup.find("table", id="case1")
+    record1 = _make_record()
+    _extract_detail_fields(case1_soup, record1)
+    assert record1.bid_bond == "NT$ 50,000 元"
+
+    # Case 2: Percentage
+    case2_soup = soup.find("table", id="case2")
+    record2 = _make_record()
+    _extract_detail_fields(case2_soup, record2)
+    assert record2.bid_bond == "5%"
+
+    # Case 3: No bond
+    case3_soup = soup.find("table", id="case3")
+    record3 = _make_record()
+    _extract_detail_fields(case3_soup, record3)
+    assert record3.bid_bond == "免繳"
+
+    # Case 4: See price list (should be "需繳納")
+    case4_soup = soup.find("table", id="case4")
+    record4 = _make_record()
+    _extract_detail_fields(case4_soup, record4)
+    assert record4.bid_bond == "需繳納"
+
+    # Case 5: Online payment fee should not be mistaken for bid bond amount
+    case5_soup = soup.find("table", id="case5")
+    record5 = _make_record()
+    _extract_detail_fields(case5_soup, record5)
+    assert record5.bid_bond == "3%"

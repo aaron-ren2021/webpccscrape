@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from typing import Any
 
@@ -22,6 +23,40 @@ from crawler.common import (
 )
 
 SOURCE_NAME = "gov_pcc"
+
+
+def _parse_bid_bond_value(value: str) -> str:
+    """Parse bid bond amount/ratio while ignoring online payment fee text."""
+    text = value.replace("\u3000", " ").strip()
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in ["否", "免", "不需", "無需", "不繳", "waived"]):
+        return "免繳"
+
+    amount_text = text
+    label_match = re.search(r"押標金額度[：:\s]*", amount_text)
+    has_amount_label = bool(label_match)
+    if label_match:
+        amount_text = amount_text[label_match.end():]
+    amount_text = re.split(r"(?:廠商線上繳納押標金)?手續費[：:：\s]*", amount_text, maxsplit=1)[0]
+
+    pct_match = re.search(r"百分之\s*([\d,.]+)", amount_text) or re.search(r"([\d,.]+)\s*[%％]", amount_text)
+    if pct_match:
+        return f"{pct_match.group(1).strip()}%"
+
+    amount_patterns = [
+        r"(?:新臺?幣|NT\$?)\s*([\d,]+)\s*元?",
+        r"([\d,]+)\s*元(?:整)?",
+    ]
+    for pat in amount_patterns:
+        amt_match = re.search(pat, amount_text)
+        if amt_match:
+            return f"NT$ {amt_match.group(1)} 元"
+    if has_amount_label:
+        amt_match = re.search(r"([\d,]+)", amount_text)
+        if amt_match:
+            return f"NT$ {amt_match.group(1)} 元"
+
+    return "需繳納"
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
@@ -319,9 +354,7 @@ def _is_captcha_page(html: str) -> bool:
 
 def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
     """Extract 預算金額, 押標金, 截止投標, 開標時間 from a gov.pcc detail page."""
-    import re
-
-    for td in soup.find_all("td"):
+    for td in soup.find_all(["td", "th"]):
         text = td.get_text(strip=True)
 
         # --- 預算金額（精確匹配，排除「是否公開」） ---
@@ -343,23 +376,20 @@ def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
                     # 公開但沒有獨立的預算金額列
                     record.budget_amount = "已公開（金額見詳細頁）"
 
-        # --- 押標金 ---
-        elif text == "是否須繳納押標金":
+        # --- 押標金（寬鬆匹配，並排除其他保證金類型） ---
+        elif "押標金" in text and "履約" not in text and "保固" not in text:
             nxt = td.find_next_sibling("td")
-            if nxt:
-                val = nxt.get_text(" ", strip=True)
-                if val.startswith("否"):
-                    record.bid_bond = "免繳"
-                else:
-                    pct_match = re.search(r"押標金額度[：:]\s*(?:新臺幣\s*)?([\d,.]+%)", val)
-                    if pct_match:
-                        record.bid_bond = pct_match.group(1)
-                    else:
-                        amt_match = re.search(r"押標金額度[：:]\s*(?:新臺幣\s*)?([\d,]+)", val)
-                        if amt_match:
-                            record.bid_bond = f"NT$ {amt_match.group(1)} 元"
-                        else:
-                            record.bid_bond = "需繳納"
+            is_label_cell = text == "是否須繳納押標金"
+            if is_label_cell and nxt:
+                val = nxt.get_text(" ", strip=True).replace("\u3000", " ")
+            else:
+                val = text.replace("\u3000", " ")
+            if val:
+                record.metadata["bid_bond_raw"] = val[:100]
+
+                parsed_bond = _parse_bid_bond_value(val)
+                if not record.bid_bond or record.bid_bond in ("需繳納", "未公開"):
+                    record.bid_bond = parsed_bond
 
         # --- 截止投標 ---
         elif text == "截止投標":
@@ -391,7 +421,9 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
     if not rows:
         rows = [anchor for anchor in soup.select("a") if anchor.get_text(strip=True)]
 
+    from datetime import datetime
     output: list[BidRecord] = []
+    today = datetime.today().date()
     for row in rows:
         title = pick_first_text(row, settings.gov_title_selectors) or row.get_text(" ", strip=True)
         title = title[:300].strip()
@@ -406,6 +438,15 @@ def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord
 
         bid_date = parse_bid_date(date_text)
         amount_value = parse_amount(amount_text)
+
+        # 判斷是否已結標：bid_date 存在且早於今天，或 date_text 有明顯結標字樣
+        is_closed = False
+        if bid_date and bid_date < today:
+            is_closed = True
+        if date_text and any(x in date_text for x in ["已結標", "已截止", "決標", "流標", "廢標"]):
+            is_closed = True
+        if is_closed:
+            continue
 
         record = BidRecord(
             title=title,
