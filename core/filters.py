@@ -17,12 +17,27 @@ EDU_ORG_INCLUDE_KEYWORDS = [
     "國防大學",
     "國防醫學院",
     "學校",
+    "國民小學",
+    "國民中學",
     "國小",
     "國中",
     "高中",
     "高職",
+    "高級中學",
     "教育局",
     "教育處",
+]
+
+# 教育單位專案語境（適用於非教育機構主辦，但明確為校園專案的案件）
+EDU_PROJECT_CONTEXT_KEYWORDS = [
+    "國民中小學",
+    "中小學",
+    "國民中學",
+    "國民小學",
+    "高級中等學校",
+    "高中",
+    "高職",
+    "校園",
 ]
 
 # 醫療機構排除關鍵字（按優先級排序）
@@ -57,6 +72,7 @@ STRICT_THEME_KEYWORDS = [
     "備份系統",
     "虛擬化",
     "gpu 伺服器",
+    "ai科技教育",
     # Microsoft 教育授權與高價值教育 IT 基礎建設
     "ovs-es",
     "ovs-es 教育版",
@@ -147,6 +163,7 @@ STABLE_THEME_KEYWORDS = [
     "資訊設備",
     "資訊服務",
     "資訊安全",
+    "電腦",
     "電腦設備",
     "筆記型電腦",
     "平板電腦",
@@ -177,6 +194,8 @@ STABLE_THEME_KEYWORDS = [
     "資安",
     "軟體訂閱",
     "軟體",
+    "虛擬實境",
+    "vr",
     "機房",
     # 系統類
     "管理系統",
@@ -186,6 +205,12 @@ STABLE_THEME_KEYWORDS = [
     "ai 運算",
     "gpu 運算",
     "運算平台",
+    "顯卡",
+    "顯示卡",
+    "資料庫",
+    "資料庫硬體",
+    "oracle",
+    "硬體升級",
     # 新增 Adobe 相關
     "adobe",
     "acrobat",
@@ -228,6 +253,11 @@ THEME_TAG_MAP = {
 
 def _has_workstation_context_match(text: str) -> bool:
     return "工作站" in text and any(keyword in text for keyword in WORKSTATION_CONTEXT_KEYWORDS)
+
+
+def has_education_project_context(title: str, summary: str = "", category: str = "") -> bool:
+    text = f"{title} {summary} {category}".lower()
+    return any(keyword.lower() in text for keyword in EDU_PROJECT_CONTEXT_KEYWORDS)
 
 
 def is_educational_org(org_name: str) -> bool:
@@ -301,10 +331,20 @@ def infer_unit_type(org_name: str) -> str:
     if "科技大學" in org_name or "大學" in org_name or "學院" in org_name:
         return "大學"
     # 國中小
-    if "國小" in org_name or "國中" in org_name:
+    if (
+        "國小" in org_name
+        or "國中" in org_name
+        or "國民小學" in org_name
+        or "國民中學" in org_name
+    ):
         return "國中小"
     # 高中職
-    if "高中" in org_name or "高職" in org_name:
+    if (
+        "高中" in org_name
+        or "高職" in org_name
+        or "高級中學" in org_name
+        or "高級中等學校" in org_name
+    ):
         return "高中職"
     # 教育局處
     if "教育局" in org_name or "教育處" in org_name:
@@ -327,7 +367,10 @@ def infer_theme_tags(title: str, summary: str = "", category: str = "") -> list[
 def filter_bids(records: Iterable[BidRecord]) -> list[BidRecord]:
     output: list[BidRecord] = []
     for record in records:
-        if not is_educational_org(record.organization):
+        is_edu_org = is_educational_org(record.organization)
+        has_edu_context = has_education_project_context(record.title, record.summary, record.category)
+
+        if not is_edu_org and not has_edu_context:
             continue
         if not has_theme_match(record.title, record.summary, record.category):
             continue

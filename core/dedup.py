@@ -7,6 +7,7 @@ from typing import Optional
 
 from core.models import BidRecord
 from core.normalize import amount_key, normalize_org, normalize_text
+from core.stable_keys import effective_record_date, notification_keys
 
 SOURCE_PRIORITY = {
     "gov_pcc": 3,
@@ -26,8 +27,24 @@ def deduplicate_bids(records: list[BidRecord]) -> list[BidRecord]:
     if not records:
         return []
 
-    exact_map: dict[str, BidRecord] = {}
+    source_identity_map: dict[str, int] = {}
+    identity_pass: list[BidRecord] = []
     for record in records:
+        strong_keys = _strong_identity_keys(record)
+        matched_key = next((key for key in strong_keys if key in source_identity_map), "")
+        if matched_key:
+            idx = source_identity_map[matched_key]
+            identity_pass[idx] = _merge_records(identity_pass[idx], record)
+            for key in _strong_identity_keys(identity_pass[idx]):
+                source_identity_map[key] = idx
+            continue
+        idx = len(identity_pass)
+        identity_pass.append(record)
+        for key in strong_keys:
+            source_identity_map[key] = idx
+
+    exact_map: dict[str, BidRecord] = {}
+    for record in identity_pass:
         key = _exact_key(record)
         if key not in exact_map:
             exact_map[key] = record
@@ -38,7 +55,8 @@ def deduplicate_bids(records: list[BidRecord]) -> list[BidRecord]:
     grouped: dict[tuple[str, str], list[BidRecord]] = {}
 
     for record in first_pass:
-        date_key = record.bid_date.isoformat() if record.bid_date else ""
+        record_date = effective_record_date(record)
+        date_key = record_date.isoformat() if record_date else ""
         group_key = (normalize_org(record.organization), date_key)
         bucket = grouped.setdefault(group_key, [])
 
@@ -58,7 +76,8 @@ def deduplicate_bids(records: list[BidRecord]) -> list[BidRecord]:
 
 
 def _exact_key(record: BidRecord) -> str:
-    date_key = record.bid_date.isoformat() if record.bid_date else ""
+    record_date = effective_record_date(record)
+    date_key = record_date.isoformat() if record_date else ""
     return "|".join(
         [
             normalize_text(record.title),
@@ -70,7 +89,7 @@ def _exact_key(record: BidRecord) -> str:
 
 
 def _is_approx_duplicate(a: BidRecord, b: BidRecord) -> bool:
-    if not _same_date(a.bid_date, b.bid_date):
+    if not _same_date(effective_record_date(a), effective_record_date(b)):
         return False
 
     if normalize_org(a.organization) != normalize_org(b.organization):
@@ -83,6 +102,13 @@ def _is_approx_duplicate(a: BidRecord, b: BidRecord) -> bool:
         return False
 
     return _amount_close(a.amount_value, b.amount_value)
+
+
+def _strong_identity_keys(record: BidRecord) -> list[str]:
+    return [
+        key for key in notification_keys(record)
+        if key.startswith("source:") or key.startswith("url:")
+    ]
 
 
 def _same_date(a: Optional[date], b: Optional[date]) -> bool:
@@ -118,6 +144,8 @@ def _merge_records(a: BidRecord, b: BidRecord) -> BidRecord:
         tags=merged_tags,
         summary=merged_summary,
         metadata=merged_metadata,
+        announcement_date=keep.announcement_date or drop.announcement_date,
+        bid_date=keep.bid_date or drop.bid_date,
     )
     return merged
 

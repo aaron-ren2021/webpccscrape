@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 from core.config import Settings
 from core.models import BidRecord
-from core.pipeline import run_monitor
+from core.pipeline import _resolve_state_store, run_monitor
+from storage.local_state_store import LocalJsonStateStore
 
 
 class FixedDateTime(datetime):
@@ -51,9 +52,15 @@ def test_run_monitor_includes_old_unnotified_records(monkeypatch) -> None:
 
     assert result.new_count == 2
     assert result.notification_sent is True
+    assert old_record.metadata["notification_candidate_reason"] == "catch_up_unnotified"
     logger.info.assert_any_call(
         "include_old_unnotified_bid",
-        extra={"title": "測試案-old", "bid_date": "2026-04-01"},
+        extra={
+            "title": "測試案-old",
+            "bid_date": "2026-04-01",
+            "announcement_date": "",
+            "reason": "catch_up_unnotified",
+        },
     )
 
 
@@ -196,3 +203,84 @@ def test_run_monitor_keeps_active_and_missing_deadline_records(monkeypatch) -> N
     assert result.new_count == 2
     assert result.notification_sent is True
     assert {record.title for record in rendered_records} == {"測試案-active", "測試案-missing"}
+
+
+def test_run_monitor_skips_g0v_alias_already_notified_from_previous_day(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=True,
+        dry_run=True,
+    )
+    already_sent = _record(uid="sent", bid_date=None, source="g0v")
+    already_sent.announcement_date = date(2026, 4, 28)
+    already_sent.metadata = {
+        "g0v_unit_id": "UNIT001",
+        "g0v_job_number": "JOB001",
+    }
+
+    class Store:
+        def get_notified_keys(self):
+            return {"source:g0v:unit001:job001"}
+
+        def mark_notified(self, records):
+            raise AssertionError("already-notified records must not be saved again")
+
+    monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_g0v_bids", lambda _s, _l: [already_sent])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.enrich_g0v_record", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr("core.pipeline.build_session", lambda _settings: object())
+    monkeypatch.setattr("core.pipeline._resolve_state_store", lambda _settings, _logger: Store())
+    monkeypatch.setattr(
+        "core.pipeline.render_email_html",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("already-notified records must not render")),
+    )
+    monkeypatch.setattr(
+        "core.pipeline.send_email",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("already-notified records must not send")),
+    )
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=True)
+
+    assert result.new_count == 0
+    assert result.notification_sent is False
+
+
+def test_run_monitor_marks_unknown_date_as_catch_up(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=False,
+        dry_run=True,
+    )
+    unknown_date_record = _record(uid="unknown", bid_date=None)
+    unknown_date_record.bid_deadline = "115/05/10 17:00"
+    rendered_records = []
+
+    monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [unknown_date_record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.enrich_gov_detail", lambda _records, _settings, _logger: None)
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.new_count == 1
+    assert rendered_records[0].metadata["notification_candidate_reason"] == "catch_up_unknown_date"
+
+
+def test_resolve_state_store_uses_local_json_without_azure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    store = _resolve_state_store(Settings(azure_storage_connection_string=""), MagicMock())
+
+    assert isinstance(store, LocalJsonStateStore)
+    assert store.path == tmp_path / "state/notified_state.json"

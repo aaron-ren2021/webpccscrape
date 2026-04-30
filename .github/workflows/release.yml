@@ -1,0 +1,43 @@
+name: Auto Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF_NAME}
+
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            git log --pretty=format:"- %s (%h)" > CHANGELOG_RELEASE.md
+          else
+            git log "$PREVIOUS_TAG"..HEAD --pretty=format:"- %s (%h)" > CHANGELOG_RELEASE.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: CHANGELOG_RELEASE.md
+          draft: false
+          prerelease: false

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -18,10 +18,12 @@ from core.dedup import deduplicate_bids
 from core.filters import filter_bids
 from core.formatter import find_earliest_deadline, render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
-from core.normalize import build_bid_uid, is_bid_deadline_expired
+from core.normalize import is_bid_deadline_expired
+from core.stable_keys import effective_record_date, notification_keys, primary_notification_key
 from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
+from storage.local_state_store import LocalJsonStateStore
 from storage.table_store import TableStateStore
 from crawler.common import build_session
 
@@ -70,13 +72,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     deduped = deduplicate_bids(filtered)
 
     for record in deduped:
-        record.uid = build_bid_uid(
-            title=record.title,
-            org=record.organization,
-            bid_date=record.bid_date,
-            amount=record.amount_value,
-            amount_raw=record.amount_raw,
-        )
+        _assign_stable_uid(record)
 
     # --- Phase 1.5: Enrich detail fields (budget, bid bond) for filtered records ---
     gov_records = [r for r in deduped if r.source == "gov_pcc"]
@@ -118,6 +114,8 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
 
     active_records = _exclude_expired_deadline_records(deduped, now_tw, logger)
+    for record in active_records:
+        _assign_stable_uid(record)
 
     # --- Phase 2: AI-enhanced classification (optional) ---
     ai_enabled = getattr(settings, 'enable_ai_classification', False)
@@ -156,16 +154,27 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     recent_cutoff = today - timedelta(days=max(settings.recent_days, 1))
     new_records: list[BidRecord] = []
     for record in active_records:
-        if record.uid in notified_keys:
+        keys = notification_keys(record)
+        if any(key in notified_keys for key in keys):
             continue
 
-        # 日期優先抓最近，但保留未通知過項目以降低漏抓風險。
-        if record.bid_date and record.bid_date < recent_cutoff:
+        record_date = effective_record_date(record)
+        if record_date is None:
+            reason = "catch_up_unknown_date"
+        elif record_date >= recent_cutoff:
+            reason = "new_recent"
+        else:
+            reason = "catch_up_unnotified"
+
+        record.metadata["notification_candidate_reason"] = reason
+        if reason != "new_recent":
             logger.info(
                 "include_old_unnotified_bid",
                 extra={
                     "title": record.title,
-                    "bid_date": record.bid_date.isoformat(),
+                    "bid_date": record.bid_date.isoformat() if record.bid_date else "",
+                    "announcement_date": record.announcement_date.isoformat() if record.announcement_date else "",
+                    "reason": reason,
                 },
             )
         new_records.append(record)
@@ -175,7 +184,8 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     new_records.sort(
         key=lambda item: (
             priority_order.get(item.ai_priority, 0),
-            item.bid_date or today,
+            1 if effective_record_date(item) else 0,
+            effective_record_date(item) or date.min,
             item.amount_value or 0,
         ),
         reverse=True,
@@ -268,6 +278,10 @@ def _exclude_expired_deadline_records(
             continue
         active_records.append(record)
     return active_records
+
+
+def _assign_stable_uid(record: BidRecord) -> None:
+    record.uid = primary_notification_key(record)
 
 
 def _build_bid_bond_unparsed_summary(
@@ -366,8 +380,13 @@ def _resolve_state_store(settings: Settings, logger: Any) -> Any:
         except Exception as exc:
             logger.exception("blob_store_failed_fallback_memory", extra={"error": str(exc)})
 
-    logger.warning("state_store_selected", extra={"backend": "memory"})
-    return InMemoryStateStore()
+    store = LocalJsonStateStore(
+        path=Path("state/notified_state.json"),
+        logger=logger,
+        retention_days=getattr(settings, "state_retention_days", 90),
+    )
+    logger.info("state_store_selected", extra={"backend": "local_json", "path": "state/notified_state.json"})
+    return store
 
 
 def _write_preview_html_if_needed(path_str: str, html: str, logger: Any) -> None:

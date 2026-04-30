@@ -43,6 +43,10 @@ def _parse_bid_bond_value(value: str) -> str:
     if pct_match:
         return f"{pct_match.group(1).strip()}%"
 
+    normalized_amount = parse_amount(amount_text)
+    if normalized_amount is not None:
+        return f"NT$ {int(normalized_amount):,} 元"
+
     amount_patterns = [
         r"(?:新臺?幣|NT\$?)\s*([\d,]+)\s*元?",
         r"([\d,]+)\s*元(?:整)?",

@@ -2,6 +2,7 @@ from datetime import date
 
 from core.filters import (
     has_theme_match,
+    has_education_project_context,
     filter_bids,
     infer_theme_tags,
     infer_unit_type,
@@ -43,6 +44,10 @@ def test_is_educational_org() -> None:
     assert is_educational_org("國防大學") is True
     assert is_educational_org("國防醫學院") is True
     assert is_educational_org("陸軍軍官學校") is True
+
+    # === 國民中小學 ===
+    assert is_educational_org("雲林縣立東明國民中學") is True
+    assert is_educational_org("新竹市東區關埔國民小學") is True
     
     # === 醫療機構排除（關鍵測試）===
     assert is_educational_org("臺大醫院") is False
@@ -163,6 +168,8 @@ def test_infer_unit_type() -> None:
     # === 國中小 ===
     assert infer_unit_type("某某國中") == "國中小"
     assert infer_unit_type("某某國小") == "國中小"
+    assert infer_unit_type("雲林縣立東明國民中學") == "國中小"
+    assert infer_unit_type("新竹市東區關埔國民小學") == "國中小"
     
     # === 高中職 ===
     assert infer_unit_type("某某高中") == "高中職"
@@ -230,3 +237,29 @@ def test_direct_and_conditional_pass_rules_for_workstation_and_hci() -> None:
     assert "人工智慧工作站採購案" in output_titles
     assert "高效能工作站採購案" in output_titles
     assert "虛擬化工作站採購案" in output_titles
+
+
+def test_user_reported_missed_bids_are_now_included() -> None:
+    records = [
+        _bid("115年全校電腦採購", "臺中市立臺中工業高級中等學校"),
+        _bid("114學年度東明國中AI科技教育：未來領航者社群計畫資本門設備採購", "雲林縣立東明國民中學"),
+        _bid("新竹市115-118年度中小學微軟教育整合應用工具三年授權及防毒軟體採購", "新竹市東區關埔國民小學"),
+        _bid("大王國中--115年臺東縣國民中小學網路優化-匯聚交換器設備及無線網路基地臺(AP)採購案", "臺東縣政府"),
+        _bid("SAS統計軟體全校授權租賃3年", "國立屏東科技大學"),
+        _bid("VR虛擬實境設備等設備", "建國科技大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert len(output_titles) == len(records)
+    for record in records:
+        assert record.title in output_titles
+
+
+def test_education_project_context_for_non_edu_org() -> None:
+    assert (
+        has_education_project_context(
+            "大王國中--115年臺東縣國民中小學網路優化-匯聚交換器設備及無線網路基地臺(AP)採購案"
+        )
+        is True
+    )
+    assert has_education_project_context("某縣政府道路鋪面改善工程") is False

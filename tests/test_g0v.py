@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from crawler.g0v import _extract_detail_fields, _parse_records, enrich_record
+from crawler.g0v import _extract_detail_fields, _parse_bid_bond_text, _parse_records, enrich_record
 from core.models import BidRecord
 
 
@@ -302,6 +302,10 @@ def test_extract_detail_fields_bid_bond_ignores_online_payment_fee() -> None:
     _extract_detail_fields(detail, record)
 
     assert record.bid_bond == "3%"
+
+
+def test_parse_bid_bond_text_with_wan_unit() -> None:
+    assert _parse_bid_bond_text("押標金額度：新臺幣3萬元整") == "30,000"
 
 
 def test_enrich_record_uses_unit_job_lookup_and_marks_source() -> None:

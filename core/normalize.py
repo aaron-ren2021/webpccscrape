@@ -14,6 +14,8 @@ ROC_DATE_PATTERN = re.compile(r"(?P<y>\d{2,3})\s*[年\/-]\s*(?P<m>\d{1,2})\s*[�
 DEADLINE_DATE_PATTERN = re.compile(r"(?P<y>\d{2,4})\s*[年\/-]\s*(?P<m>\d{1,2})\s*[月\/-]\s*(?P<d>\d{1,2})")
 DEADLINE_TIME_PATTERN = re.compile(r"(?P<h>\d{1,2})\s*[:：]\s*(?P<mi>\d{1,2})")
 MISSING_DEADLINE_VALUES = {"", "無", "無提供", "未提供", "詳見連結", "none", "null", "n/a"}
+MIN_REASONABLE_BID_YEAR = 2000
+MAX_REASONABLE_BID_YEAR = 2100
 
 
 def normalize_text(value: str) -> str:
@@ -72,6 +74,10 @@ def parse_bid_date(value: str) -> Optional[date]:
         return None
 
     text = unicodedata.normalize("NFKC", value).strip()
+    compact_digits = re.sub(r"\D", "", text)
+    compact = _parse_compact_bid_date(compact_digits)
+    if compact:
+        return compact
 
     roc_match = ROC_DATE_PATTERN.search(text)
     if roc_match:
@@ -79,16 +85,39 @@ def parse_bid_date(value: str) -> Optional[date]:
         year = roc_year + 1911 if roc_year < 1911 else roc_year
         month = int(roc_match.group("m"))
         day = int(roc_match.group("d"))
-        try:
-            return date(year, month, day)
-        except ValueError:
-            return None
+        return _safe_bid_date(year, month, day)
 
     try:
         parsed = dt_parser.parse(text, dayfirst=False, fuzzy=True)
-        return parsed.date()
+        parsed_date = parsed.date()
+        if not _is_reasonable_bid_year(parsed_date.year):
+            return None
+        return parsed_date
     except (ValueError, OverflowError):
         return None
+
+
+def _parse_compact_bid_date(value: str) -> Optional[date]:
+    if len(value) == 8 and value.startswith(("19", "20")):
+        return _safe_bid_date(int(value[:4]), int(value[4:6]), int(value[6:8]))
+    if len(value) == 7:
+        return _safe_bid_date(int(value[:3]) + 1911, int(value[3:5]), int(value[5:7]))
+    if len(value) == 6 and not value.startswith(("19", "20")):
+        return _safe_bid_date(int(value[:2]) + 1911, int(value[2:4]), int(value[4:6]))
+    return None
+
+
+def _safe_bid_date(year: int, month: int, day: int) -> Optional[date]:
+    if not _is_reasonable_bid_year(year):
+        return None
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _is_reasonable_bid_year(year: int) -> bool:
+    return MIN_REASONABLE_BID_YEAR <= year <= MAX_REASONABLE_BID_YEAR
 
 
 def parse_bid_deadline_text(value: str) -> Optional[tuple[date, time | None]]:

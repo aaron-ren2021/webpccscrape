@@ -6,5 +6,6 @@ __pycache__/
 .pytest_cache/
 logs/
 output/
+state/
 .sessions/
 .detection_logs/

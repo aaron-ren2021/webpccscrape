@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from crawler.gov import _extract_detail_fields, _is_captcha_page
+from crawler.gov import _extract_detail_fields, _is_captcha_page, _parse_bid_bond_value
 from crawler.gov import enrich_detail, fetch_bids
 from crawler.common import parse_html
 from core.config import Settings
@@ -189,3 +189,7 @@ def test_extract_detail_fields_bond_variations():
     record5 = _make_record()
     _extract_detail_fields(case5_soup, record5)
     assert record5.bid_bond == "3%"
+
+
+def test_parse_bid_bond_value_with_wan_unit():
+    assert _parse_bid_bond_value("押標金額度：新臺幣3萬元整") == "NT$ 30,000 元"

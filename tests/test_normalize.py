@@ -23,6 +23,15 @@ def test_parse_bid_date_roc_format() -> None:
     assert parse_bid_date("114/03/24") == date(2025, 3, 24)
 
 
+def test_parse_bid_date_compact_formats() -> None:
+    assert parse_bid_date("20260430") == date(2026, 4, 30)
+    assert parse_bid_date("1150430") == date(2026, 4, 30)
+
+
+def test_parse_bid_date_rejects_implausible_short_years() -> None:
+    assert parse_bid_date("37/04/30") is None
+
+
 def test_parse_bid_deadline_text_supports_roc_and_ce_with_optional_time() -> None:
     roc_date, roc_time = parse_bid_deadline_text("115/04/29 17:00") or (None, None)
     ce_date, ce_time = parse_bid_deadline_text("2026-04-30") or (None, None)

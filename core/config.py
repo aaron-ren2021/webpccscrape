@@ -82,6 +82,7 @@ class Settings:
     proxy_strategy: str = "round_robin"
 
     recent_days: int = 1
+    state_retention_days: int = 90
     high_amount_threshold: float = 5_000_000.0
     bid_bond_unparsed_sample_size: int = 5
     bid_bond_unparsed_raw_truncate: int = 80
@@ -191,6 +192,7 @@ class Settings:
             enable_playwright=_parse_bool(os.getenv("ENABLE_PLAYWRIGHT"), True),
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),
+            state_retention_days=_parse_int(os.getenv("STATE_RETENTION_DAYS"), 90),
             high_amount_threshold=_parse_float(os.getenv("HIGH_AMOUNT_THRESHOLD"), 5_000_000.0),
             bid_bond_unparsed_sample_size=_parse_int(os.getenv("BID_BOND_UNPARSED_SAMPLE_SIZE"), 5),
             bid_bond_unparsed_raw_truncate=_parse_int(os.getenv("BID_BOND_UNPARSED_RAW_TRUNCATE"), 80),
