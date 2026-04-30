@@ -100,6 +100,14 @@ def test_false_positive_regressions_are_excluded() -> None:
         assert has_theme_match(title) is False, title
 
 
+def test_furniture_procurement_in_computer_classroom_is_excluded() -> None:
+    record = _bid("自強高工新校舍電腦教室電腦桌椅採購", "某某高級工業職業學校")
+    record.category = "財物類 381 - 傢具"
+
+    assert has_theme_match(record.title, category=record.category) is False
+    assert filter_bids([record]) == []
+
+
 def test_boundary_cases_stay_available_for_embedding() -> None:
     boundary_cases = [
         ("臺中市立文山國民中學", "MFA 多因子驗證設備採購"),
