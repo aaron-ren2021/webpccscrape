@@ -26,6 +26,8 @@ EDU_ORG_INCLUDE_KEYWORDS = [
     "高級中學",
     "教育局",
     "教育處",
+    "教育部",
+    "教育署",
 ]
 
 # 教育單位專案語境（適用於非教育機構主辦，但明確為校園專案的案件）
@@ -67,12 +69,15 @@ STRICT_THEME_KEYWORDS = [
     "fortigate",
     "tenable",
     "office 365",
+    "m365",
+    "microsoft 365",
     "power bi",
     "copilot 教育版",
     "備份系統",
     "虛擬化",
     "gpu 伺服器",
     "ai科技教育",
+    "aicg",
     # Microsoft 教育授權與高價值教育 IT 基礎建設
     "ovs-es",
     "ovs-es 教育版",
@@ -104,6 +109,9 @@ WORKSTATION_CONTEXT_KEYWORDS = [
     "人工智慧",
     "高效能",
     "虛擬化",
+    "繪圖卡",
+    "顯卡",
+    "顯示卡",
 ]
 
 # 第三層：內部營運詞（僅供路由/商機分類，不作為是否放行依據）
@@ -189,6 +197,7 @@ STABLE_THEME_KEYWORDS = [
     "macbook",
     "網路設備",
     "無線網路",
+    "網路建置",
     "交換器",
     "路由器",
     "基地台",
@@ -211,6 +220,9 @@ STABLE_THEME_KEYWORDS = [
     # 系統類
     "管理系統",
     "管理平台",
+    "資訊系統",
+    "整合系統",
+    "數位整合系統",
     "檔案管理",
     # AI/運算類
     "ai 運算",
@@ -237,6 +249,8 @@ THEME_TAG_MAP = {
         "授權",
         "訂閱",
         "系統",
+        "資訊系統",
+        "整合系統",
         "copilot",
         "copilot studio",
         "copilot 教育版",
@@ -248,6 +262,8 @@ THEME_TAG_MAP = {
         "photoshop",  # 新增
         "github enterprise server",
         "power bi",
+        "m365",
+        "microsoft 365",
         "fabric",
         "m365 cowork",
         "segma",

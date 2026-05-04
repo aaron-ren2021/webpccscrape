@@ -263,6 +263,22 @@ def test_user_reported_missed_bids_are_now_included() -> None:
         assert record.title in output_titles
 
 
+def test_user_reported_2026_05_missed_bids_are_now_included() -> None:
+    records = [
+        _bid("M365教員/學生授權二年訂閱", "國立臺灣藝術大學"),
+        _bid("115年清靜樓網路建置採購", "國立中央大學附屬中壢高級中學"),
+        _bid("電腦主機、工作站及顯示器一批", "國立成功大學"),
+        _bid("工作站繪圖卡壹張", "國立成功大學"),
+        _bid("教育部國民及學前教育署115年度學前教保資訊系統委託資訊服務案", "教育部國民及學前教育署"),
+        _bid("太空科技與海洋教育中心115年AICG數位整合系統採購案", "臺北市立永春高級中學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert len(output_titles) == len(records)
+    for record in records:
+        assert record.title in output_titles
+
+
 def test_education_project_context_for_non_edu_org() -> None:
     assert (
         has_education_project_context(
