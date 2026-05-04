@@ -279,6 +279,39 @@ def test_user_reported_2026_05_missed_bids_are_now_included() -> None:
         assert record.title in output_titles
 
 
+def test_company_service_and_product_scope_is_included() -> None:
+    records = [
+        _bid("Microsoft 365 校園授權 EES 採購案", "某某大學"),
+        _bid("Adobe Creative Cloud 與 Acrobat 授權採購", "某某大學"),
+        _bid("VMware 虛擬化平台擴充採購案", "某某大學"),
+        _bid("Thin Client 虛擬桌面設備採購", "某某高級中學"),
+        _bid("Veeam 備份備援系統建置案", "某某大學"),
+        _bid("Dell Server 與 NetApp Storage 汰換案", "某某大學"),
+        _bid("Aruba 校園 Wi-Fi AP 建置案", "某某大學"),
+        _bid("Email Security DLP 防釣魚服務採購", "某某大學"),
+        _bid("Wacom 繪圖板與 HP DesignJet 繪圖機採購", "某某科技大學"),
+        _bid("Fortinet Palo Alto 資訊安全設備採購", "某某大學"),
+        _bid("校務行政整合平台建置案", "某某大學"),
+        _bid("教學助理AI備課出題批改系統", "某某大學"),
+        _bid("數位學習平台 LMS 與學習分析建置", "某某大學"),
+        _bid("RAG 知識庫問答系統建置", "某某大學"),
+        _bid("OCR 文件智慧處理與 RPA 流程自動化案", "某某大學"),
+        _bid("報表智慧產生與 AI 影像影片產製平台", "某某大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert len(output_titles) == len(records)
+    for record in records:
+        assert record.title in output_titles
+
+
+def test_company_service_scope_tagging() -> None:
+    assert "雲端" in infer_theme_tags("Microsoft 365 Azure Teams 混合辦公授權案")
+    assert "資安" in infer_theme_tags("SentinelOne CrowdStrike Email Security DLP 採購")
+    assert "機房" in infer_theme_tags("Veeam 備份與 QNAP 儲存設備採購")
+    assert "軟體" in infer_theme_tags("RAG 知識庫問答與 OCR 文件智慧處理系統")
+
+
 def test_education_project_context_for_non_edu_org() -> None:
     assert (
         has_education_project_context(
