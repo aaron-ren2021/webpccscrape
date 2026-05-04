@@ -89,3 +89,67 @@ def test_dedup_uses_effective_announcement_date_for_approx_match() -> None:
     output = deduplicate_bids(bids)
 
     assert len(output) == 1
+
+
+def test_dedup_prefers_gov_over_taiwanbuying_computer_recall() -> None:
+    bids = [
+        _bid(
+            "taiwanbuying_today_computer",
+            title="資訊設備 採購案",
+            amount=1_050_000,
+            bid_date=date(2026, 5, 4),
+        ),
+        _bid(
+            "gov_pcc",
+            title="資訊設備採購案",
+            amount=1_000_000,
+            bid_date=date(2026, 5, 3),
+        ),
+    ]
+
+    output = deduplicate_bids(bids)
+
+    assert len(output) == 1
+    assert output[0].source == "gov_pcc"
+    assert output[0].backup_source == "taiwanbuying_today_computer"
+
+
+def test_dedup_matches_taiwanbuying_stable_id() -> None:
+    bids = [
+        _bid(
+            "taiwanbuying_today_computer",
+            title="防火牆採購案",
+            metadata={"taiwanbuying_id": "TB115001"},
+            url="https://www.taiwanbuying.com.tw/ShowTender.ASP?TBN=TB115001",
+        ),
+        _bid(
+            "taiwanbuying",
+            title="次世代防火牆採購案",
+            metadata={"taiwanbuying_id": "TB115001"},
+            url="https://www.taiwanbuying.com.tw/ShowTender.ASP?TBN=TB115001",
+        ),
+    ]
+
+    output = deduplicate_bids(bids)
+
+    assert len(output) == 1
+    assert output[0].source == "taiwanbuying_today_computer"
+
+
+def test_dedup_does_not_merge_same_title_from_different_schools() -> None:
+    bids = [
+        _bid("gov_pcc", title="資訊設備採購案", bid_date=date(2026, 5, 4)),
+        BidRecord(
+            title="資訊設備採購案",
+            organization="另一所大學",
+            bid_date=date(2026, 5, 4),
+            amount_raw="100萬",
+            amount_value=1_000_000,
+            source="taiwanbuying_today_computer",
+            url="https://example.com/tw-computer",
+        ),
+    ]
+
+    output = deduplicate_bids(bids)
+
+    assert len(output) == 2

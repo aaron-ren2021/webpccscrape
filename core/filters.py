@@ -166,6 +166,7 @@ EXCLUDE_THEME_KEYWORDS = [
     "血壓計",
     "血糖機",
     "醫療耗材",
+    "醫療儀器",
     "手術器械",
     "導引鞘",
     "導管",
@@ -181,6 +182,7 @@ EXCLUDE_THEME_KEYWORDS = [
     "顯微鏡",
     "離心機",
     "培養箱",
+    "實驗室儀器",
     # 電子量測設備
     "示波器",
     "電錶",
@@ -202,6 +204,15 @@ EXCLUDE_THEME_KEYWORDS = [
     "傢具",
     "家具",
     "桌椅",
+]
+
+CATEGORY_RECALL_SOURCE_NAMES = {
+    "taiwanbuying_today_computer",
+}
+
+COMPUTER_CATEGORY_RECALL_KEYWORDS = [
+    "採購-電腦類",
+    "電腦類",
 ]
 
 # 穩定版：保守放行詞（先維持上線穩定）
@@ -257,6 +268,11 @@ STABLE_THEME_KEYWORDS = [
     "虛擬實境",
     "vr",
     "機房",
+    "電腦機房",
+    "機房設施",
+    "機房維護",
+    "機房維運",
+    "機房汰換",
     # 系統類
     "管理系統",
     "管理平台",
@@ -411,7 +427,7 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     text = f"{title} {summary} {category}".lower()
 
     # 第一階段：排除非資訊設備
-    if any(keyword.lower() in text for keyword in EXCLUDE_THEME_KEYWORDS):
+    if has_strong_exclude_match(title, summary, category):
         return False
 
     # 第二階段：包含資訊設備關鍵字（三層合併），但支援詞不可直接放行
@@ -424,6 +440,21 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
 
     # 條件放行：工作站 + 指定上下文
     return _has_workstation_context_match(text)
+
+
+def has_strong_exclude_match(title: str, summary: str = "", category: str = "") -> bool:
+    text = f"{title} {summary} {category}".lower()
+    return any(keyword.lower() in text for keyword in EXCLUDE_THEME_KEYWORDS)
+
+
+def is_category_recall_candidate(record: BidRecord) -> bool:
+    if record.source not in CATEGORY_RECALL_SOURCE_NAMES:
+        return False
+    if has_strong_exclude_match(record.title, record.summary, record.category):
+        return False
+
+    text = f"{record.category} {record.metadata.get('category', '')}".lower()
+    return any(keyword.lower() in text for keyword in COMPUTER_CATEGORY_RECALL_KEYWORDS)
 
 
 def infer_unit_type(org_name: str) -> str:
@@ -479,10 +510,16 @@ def filter_bids(records: Iterable[BidRecord]) -> list[BidRecord]:
 
         if not is_edu_org and not has_edu_context:
             continue
-        if not has_theme_match(record.title, record.summary, record.category):
+        is_theme_candidate = has_theme_match(record.title, record.summary, record.category)
+        is_recall_candidate = is_category_recall_candidate(record)
+        if not is_theme_candidate and not is_recall_candidate:
             continue
         record.unit_type = infer_unit_type(record.organization)
         record.tags = infer_theme_tags(record.title, record.summary, record.category)
+        if is_recall_candidate and not is_theme_candidate:
+            record.metadata["filter_source"] = "category_recall"
+            record.metadata["keyword_confidence"] = "category_recall"
+            record.metadata["keyword_reasons"] = ["taiwanbuying_computer_category_recall"]
         output.append(record)
     return output
 

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from crawler.gov import fetch_bids as fetch_gov_bids
 from crawler.gov import enrich_detail as enrich_gov_detail
 from crawler.taiwanbuying import fetch_bids as fetch_taiwanbuying_bids
+from crawler.taiwanbuying_computer import fetch_bids as fetch_taiwanbuying_computer_bids
 from crawler.g0v import fetch_bids as fetch_g0v_bids
 from crawler.g0v import enrich_record as enrich_g0v_record
 from core.ai_classifier import AIClassification, build_ai_clients, classify_bids_batch
@@ -51,6 +52,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     # Define sources to fetch
     sources = [
         ("taiwanbuying", fetch_taiwanbuying_bids),
+        ("taiwanbuying_today_computer", fetch_taiwanbuying_computer_bids),
         ("gov_pcc", fetch_gov_bids),
     ]
     
@@ -68,8 +70,38 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             source_status.append(SourceRunStatus(source=source_name, success=False, count=0, error=str(exc)))
 
     # --- Phase 1: keyword-based filter + dedup ---
+    source_counts = Counter(record.source for record in all_records)
+    taiwanbuying_today_update_count = source_counts.get("taiwanbuying_today_computer", 0)
+    logger.info(
+        "source_counts_collected",
+        extra={
+            "source_counts": dict(source_counts),
+            "taiwanbuying_today_computer_today_update_count": taiwanbuying_today_update_count,
+        },
+    )
+
     filtered = filter_bids(all_records)
+    category_recall_count = sum(
+        1 for record in filtered
+        if str(record.metadata.get("filter_source") or "") == "category_recall"
+    )
+    logger.info(
+        "filter_candidates_collected",
+        extra={
+            "crawled_count": len(all_records),
+            "filtered_count": len(filtered),
+            "category_recall_count": category_recall_count,
+        },
+    )
+
     deduped = deduplicate_bids(filtered)
+    logger.info(
+        "dedup_completed",
+        extra={
+            "before_count": len(filtered),
+            "after_count": len(deduped),
+        },
+    )
 
     for record in deduped:
         _assign_stable_uid(record)

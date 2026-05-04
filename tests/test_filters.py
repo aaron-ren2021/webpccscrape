@@ -11,15 +11,21 @@ from core.filters import (
 from core.models import BidRecord
 
 
-def _bid(title: str, org: str) -> BidRecord:
+def _bid(
+    title: str,
+    org: str,
+    source: str = "gov_pcc",
+    category: str = "",
+) -> BidRecord:
     return BidRecord(
         title=title,
         organization=org,
         bid_date=date(2026, 3, 24),
         amount_raw="100萬",
         amount_value=1_000_000,
-        source="gov_pcc",
+        source=source,
         url="https://example.com/bid",
+        category=category,
     )
 
 
@@ -277,6 +283,31 @@ def test_user_reported_2026_05_missed_bids_are_now_included() -> None:
     assert len(output_titles) == len(records)
     for record in records:
         assert record.title in output_titles
+
+
+def test_taiwanbuying_computer_category_recalls_education_it_context() -> None:
+    records = [
+        _bid("防火牆採購案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("宿舍網路交換器採購案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("英文資訊網維護案", "某某高中", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("教學錄音服務系統採購案", "某某國民小學", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("圖書館安全系統採購案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("機房設施汰換案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+
+    assert output_titles == {record.title for record in records}
+
+
+def test_taiwanbuying_computer_category_recall_keeps_strong_exclusions() -> None:
+    records = [
+        _bid("電腦教室桌椅採購案", "某某高職", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("顯微鏡影像系統採購案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+        _bid("空調監控系統採購案", "某某大學", "taiwanbuying_today_computer", "採購-電腦類"),
+    ]
+
+    assert filter_bids(records) == []
 
 
 def test_company_service_and_product_scope_is_included() -> None:

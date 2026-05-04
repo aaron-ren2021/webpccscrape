@@ -22,6 +22,7 @@ log = logging.getLogger("source-check")
 
 # Import source fetchers
 from crawler.taiwanbuying import fetch_bids as fetch_tw
+from crawler.taiwanbuying_computer import fetch_bids as fetch_tw_computer
 from crawler.gov import fetch_bids as fetch_gov
 from crawler.g0v import fetch_bids as fetch_g0v
 
@@ -31,6 +32,7 @@ def main() -> None:
     
     sources = [
         ("taiwanbuying", fetch_tw, "台灣採購公報"),
+        ("taiwanbuying_today_computer", fetch_tw_computer, "台灣採購公報-電腦類"),
         ("gov_pcc", fetch_gov, "政府電子採購網"),
         ("g0v", fetch_g0v, "開放資料 API"),
     ]

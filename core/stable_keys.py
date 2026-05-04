@@ -71,6 +71,18 @@ def _source_identity_keys(record: BidRecord) -> list[str]:
     if unit_id and job_number:
         keys.append(f"source:g0v:{normalize_text(unit_id)}:{normalize_text(job_number)}")
 
+    taiwanbuying_id = _first_non_empty(
+        metadata.get("taiwanbuying_id"),
+        metadata.get("tbn"),
+        metadata.get("TBN"),
+        _query_value(record.url, "TBN"),
+        _query_value(record.url, "tbn"),
+        _query_value(str(metadata.get("taiwanbuying_url") or ""), "TBN"),
+        _query_value(str(metadata.get("taiwanbuying_url") or ""), "tbn"),
+    )
+    if taiwanbuying_id:
+        keys.append(f"source:taiwanbuying:{normalize_text(taiwanbuying_id)}")
+
     return keys
 
 

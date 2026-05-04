@@ -40,6 +40,7 @@ def test_run_monitor_includes_old_unnotified_records(monkeypatch) -> None:
     today_record = _record(uid="today", bid_date=date(2026, 4, 24))
 
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [old_record, today_record])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
     monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
@@ -83,6 +84,7 @@ def test_run_monitor_logs_g0v_link_resolution_summary(monkeypatch) -> None:
         return False
 
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_g0v_bids", lambda _s, _l: [g0v_record])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
@@ -131,6 +133,7 @@ def test_run_monitor_excludes_expired_deadlines_before_notifications(monkeypatch
 
     monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [expired_record])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
     monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
@@ -187,6 +190,7 @@ def test_run_monitor_keeps_active_and_missing_deadline_records(monkeypatch) -> N
 
     monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr(
         "core.pipeline.fetch_gov_bids",
         lambda _s, _l: [expired_record, active_record, missing_deadline_record],
@@ -228,6 +232,7 @@ def test_run_monitor_skips_g0v_alias_already_notified_from_previous_day(monkeypa
 
     monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_g0v_bids", lambda _s, _l: [already_sent])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
@@ -263,6 +268,7 @@ def test_run_monitor_marks_unknown_date_as_catch_up(monkeypatch) -> None:
 
     monkeypatch.setattr("core.pipeline.datetime", FixedDateTime)
     monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_computer_bids", lambda _s, _l: [])
     monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [unknown_date_record])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
     monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))

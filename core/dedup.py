@@ -10,13 +10,16 @@ from core.normalize import amount_key, normalize_org, normalize_text
 from core.stable_keys import effective_record_date, notification_keys
 
 SOURCE_PRIORITY = {
-    "gov_pcc": 3,
+    "gov_pcc": 4,
+    "gov_pcc_category_84": 4,
+    "taiwanbuying_today_computer": 3,
     "taiwanbuying": 2,
     "g0v": 1,
 }
 
 KEYWORD_CONFIDENCE_PRIORITY = {
     "high_confidence": 2,
+    "category_recall": 2,
     "boundary": 1,
     "excluded_low_score": 0,
     "excluded_strong": 0,
@@ -52,12 +55,10 @@ def deduplicate_bids(records: list[BidRecord]) -> list[BidRecord]:
         exact_map[key] = _merge_records(exact_map[key], record)
 
     first_pass = list(exact_map.values())
-    grouped: dict[tuple[str, str], list[BidRecord]] = {}
+    grouped: dict[str, list[BidRecord]] = {}
 
     for record in first_pass:
-        record_date = effective_record_date(record)
-        date_key = record_date.isoformat() if record_date else ""
-        group_key = (normalize_org(record.organization), date_key)
+        group_key = normalize_org(record.organization)
         bucket = grouped.setdefault(group_key, [])
 
         merged = False
@@ -116,7 +117,7 @@ def _same_date(a: Optional[date], b: Optional[date]) -> bool:
         return True
     if a is None or b is None:
         return False
-    return a == b
+    return abs((a - b).days) <= 1
 
 
 def _amount_close(a: Optional[float], b: Optional[float]) -> bool:
@@ -127,7 +128,7 @@ def _amount_close(a: Optional[float], b: Optional[float]) -> bool:
     if diff <= 5000:
         return True
     baseline = max(abs(a), abs(b), 1.0)
-    return diff / baseline <= 0.05
+    return diff / baseline <= 0.10
 
 
 def _merge_records(a: BidRecord, b: BidRecord) -> BidRecord:
