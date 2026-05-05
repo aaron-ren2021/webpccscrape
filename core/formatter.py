@@ -6,6 +6,7 @@ from html import escape
 from typing import Optional
 
 from core.filters import count_by_unit_type
+from core.high_amount import evaluate_high_amount
 from core.models import BidRecord
 
 # Constants for bid bond free values
@@ -71,10 +72,10 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
         tag_counter.update(record.tags)
 
     high_amount_rows = [
-        record
+        (record, evaluate_high_amount(record, high_amount_threshold))
         for record in records
-        if record.amount_value is not None and record.amount_value >= high_amount_threshold
     ]
+    high_amount_rows = [(record, decision) for record, decision in high_amount_rows if decision.is_high_amount]
 
     # Find earliest deadline
     earliest_deadline = find_earliest_deadline(records)
@@ -83,8 +84,11 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     tag_summary = "、".join(f"{escape(tag)}({count})" for tag, count in tag_counter.most_common()) or "無"
 
     high_amount_summary = "；".join(
-        f"{escape(item.organization)} / {escape(item.title)} / {format_amount(item)}"
-        for item in high_amount_rows[:5]
+        (
+            f"{escape(item.organization)} / {escape(item.title)} / {format_amount(item)}"
+            f"（{escape('、'.join(decision.reasons[:2]))}）"
+        )
+        for item, decision in high_amount_rows[:5]
     )
     if not high_amount_summary:
         high_amount_summary = "無"

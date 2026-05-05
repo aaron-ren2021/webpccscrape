@@ -143,6 +143,9 @@ def test_non_it_maintenance_is_excluded_but_it_maintenance_kept() -> None:
 def test_engineering_activity_teaching_aids_are_excluded() -> None:
     excluded_cases = [
         ("某某大學", "校舍整修工程採購"),
+        ("某某大學", "校舍整修資訊系統工程"),
+        ("某某高中", "廁所整修工程採購"),
+        ("某某國中", "土建工程電力改善案"),
         ("某某高中", "雙語教學教具採購"),
         ("某某國中", "科學營隊活動委外案"),
     ]
@@ -182,6 +185,8 @@ def test_infer_unit_type() -> None:
     # === 高中職 ===
     assert infer_unit_type("某某高中") == "高中職"
     assert infer_unit_type("某某高職") == "高中職"
+    assert infer_unit_type("國立中央大學附屬中壢高級中學") == "高中職"
+    assert infer_unit_type("國立臺灣師範大學附屬高級中學") == "高中職"
     
     # === 專科（優先於大學/學院）===
     assert infer_unit_type("國立臺北護理健康大學專科部") == "專科"
@@ -310,6 +315,12 @@ def test_company_service_scope_tagging() -> None:
     assert "資安" in infer_theme_tags("SentinelOne CrowdStrike Email Security DLP 採購")
     assert "機房" in infer_theme_tags("Veeam 備份與 QNAP 儲存設備採購")
     assert "軟體" in infer_theme_tags("RAG 知識庫問答與 OCR 文件智慧處理系統")
+    assert {"機房", "電力", "整合"}.issubset(set(infer_theme_tags("機房電力及系統整合建置案")))
+
+
+def test_affiliated_elementary_and_experimental_school_unit_type() -> None:
+    assert infer_unit_type("國立政治大學附設實驗國民小學") == "國中小"
+    assert infer_unit_type("國立臺北教育大學附小") == "國中小"
 
 
 def test_education_project_context_for_non_edu_org() -> None:

@@ -204,7 +204,15 @@ EXCLUDE_THEME_KEYWORDS = [
     "桌椅",
     # 建築/設施工程：避免非資訊設備工程誤命中
     "廁所",
+    "廁所改善",
+    "廁所整修",
+    "整修",
     "整修工程",
+    "土建",
+    "土木",
+    "土木工程",
+    "建築工程",
+    "校舍工程",
     # 門禁/安防系統：非資訊設備
     "門禁",
     "門禁管理系統",
@@ -360,6 +368,8 @@ THEME_TAG_MAP = {
         "ees",  # 新增：微軟EES大專授權
     ],
     "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "伺服器", "dell", "hpe", "lenovo", "jetson agx orin", "超融合設備", "超融合平台", "工作站", "儲存", "storage", "netapp", "pure storage", "qnap", "veeam", "acronis", "commvault"],
+    "電力": ["ups", "不斷電", "不斷電系統", "電力", "配電", "電源", "pdu"],
+    "整合": ["整合", "系統整合", "整合系統", "數位整合系統", "超融合", "超融合設備", "超融合平台"],
     "內部營運": INTERNAL_BIZ_KEYWORDS,
 }
 
@@ -440,28 +450,59 @@ def infer_unit_type(org_name: str) -> str:
     # 專科、技術學院（優先於大學/學院）
     if "專科" in org_name or "技術學院" in org_name:
         return "專科"
+    # 大學附設/附屬中小學先依實際學制分類，避免落入大學或其他。
+    if any(
+        keyword in org_name
+        for keyword in [
+            "附中", "附屬中學", "附屬高級中學", "附設高級中學", 
+            "附屬國民中學",  # 新增：附屬國中
+            "高級中學", "高級中等學校",
+            "完全中學",  # 新增：完全中學（國高中一貫）
+            "實驗高級中學",  # 新增：實驗高中
+        ]
+    ):
+        return "高中職"
+    if any(
+        keyword in org_name
+        for keyword in [
+            "附小", "附屬小學", "附設小學", 
+            "附設國民小學", "附屬國民小學",  # 新增：附設/附屬國小變形
+            "附設實驗國民小學", 
+            "實驗國民小學", "實驗國民中學",  # 新增：實驗國中小
+            "國民小學", "國民中學", 
+            "國民中小學", "中小學",  # 新增：中小學統稱
+            "國小", "國中"
+        ]
+    ):
+        return "國中小"
     # 科技大學、大學、學院（含醫學院）
     if "科技大學" in org_name or "大學" in org_name or "學院" in org_name:
         return "大學"
-    # 國中小
+    # 國中小（後備判斷）
     if (
         "國小" in org_name
         or "國中" in org_name
         or "國民小學" in org_name
         or "國民中學" in org_name
+        or "國民中小學" in org_name  # 新增
+        or "中小學" in org_name  # 新增
     ):
         return "國中小"
-    # 高中職
+    # 高中職（後備判斷）
     if (
         "高中" in org_name
         or "高職" in org_name
         or "高級中學" in org_name
         or "高級中等學校" in org_name
+        or "完全中學" in org_name  # 新增
     ):
         return "高中職"
     # 教育局處
     if "教育局" in org_name or "教育處" in org_name:
         return "教育局處"
+    # 實驗學校（泛稱，無法判斷學制時）
+    if "實驗學校" in org_name:
+        return "實驗學校"
     # 泛稱學校
     if "學校" in org_name:
         return "學校"

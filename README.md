@@ -82,7 +82,7 @@
 ```
 
 ## 4. 安裝方式
-1. 建立 Python 3.11+ 環境
+1. 建立 Python 3.12.3 環境
 2. 安裝依賴：
 ```bash
 pip install -r requirements.txt
@@ -101,6 +101,10 @@ playwright install chromium
 ```bash
 python verify_stealth.py
 ```
+
+**本地部署注意事項：**
+- 本專案已移除 Azure 相關套件，專為本地部署優化。
+- 預設使用記憶體儲存，避免重複通知依賴外部服務。
 
 ## 5. 本機執行方式
 
@@ -137,7 +141,7 @@ crontab -e
 新增以下內容（假設 Python 路徑與專案路徑已正確）：
 
 ```
-30 8 * * 1-5 /home/xcloud/project/webpccscrape/venv/bin/python /home/xcloud/project/webpccscrape/run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
+35 8 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
 ```
 
 說明：
@@ -145,18 +149,31 @@ crontab -e
 - `/home/xcloud/project/webpccscrape/venv/bin/python` 為虛擬環境內的 Python 路徑
 - `>> logs/cron.log 2>&1` 將輸出記錄到 logs/cron.log 檔案
 
+### 6.2 每日彙總排程（可選）
+
+每天早上 9:00 自動產生前一日彙總：
+
+```
+00 9 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python summarize_cron_log.py --log-file logs/cron.log --days 1 >> /home/xcloud/project/webpccscrape/logs/cron_summary.log 2>&1
+```
+
 ### 6.2 SMTP 設定
 
-請於 `.env` 設定 SMTP 相關參數，範例如下：
+請於 `.env` 設定 SMTP 相關參數，範例如下（以 Outlook 為例）：
 
 ```
-SMTP_HOST=smtp.example.com
+SMTP_HOST=smtp-mail.outlook.com
 SMTP_PORT=587
-SMTP_USERNAME=your_account
-SMTP_PASSWORD=your_password
-SMTP_FROM=your@email.com
-EMAIL_TO=收件人1,收件人2
+SMTP_USERNAME=your_account@outlook.com
+SMTP_PASSWORD=your_password_or_app_password
+SMTP_FROM=your_account@outlook.com
+EMAIL_TO=收件人1@example.com,收件人2@example.com
+SMTP_USE_TLS=true
 ```
+
+**重要提示：**
+- 如果 Outlook 帳號啟用了雙重驗證（2FA），請使用「應用程式密碼」而非帳號密碼。
+- 申請應用程式密碼：登入 Outlook → 安全性設定 → 應用程式密碼。
 
 ### 6.3 BGE-M3 生產設定與每日巡檢
 
@@ -204,6 +221,14 @@ python summarize_cron_log.py --log-file logs/cron.log --days 1 >> logs/cron_summ
 - `embedding_ab_dataset_row`（統一欄位：`uid/title/keyword_confidence/embedding_similarity/embedding_best_category/decision_source/model_name/threshold`）
 - `embedding_ab_row`
 - `embedding_ab_summary`
+
+### 6.4 本地部署狀態記錄說明
+
+- **本地部署預設使用記憶體儲存**（InMemoryStateStore）
+- 每次執行都是獨立的，不會記錄「已通知過的案件」
+- 如果需要持久化狀態避免重複通知，可以：
+  - 選項 1：設定 Azure Storage（需要 Azure 帳號）
+  - 選項 2：自行實作本地文件儲存（需修改程式碼）
 
 ## 6. Azure 部署方式
 ### 6.1 需要工具

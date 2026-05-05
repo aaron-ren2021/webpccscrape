@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from core.formatter import _render_card, find_earliest_deadline, render_email_subject
+from core.formatter import _render_card, find_earliest_deadline, render_email_html, render_email_subject
 from core.models import BidRecord
 
 
@@ -115,3 +115,16 @@ def test_render_email_subject_uses_deadline_text() -> None:
     )
 
     assert subject == "[教育資訊標案監控] 2026-04-24 新增 3 筆｜最緊急截止 2026-04-24"
+
+
+def test_render_email_html_uses_high_amount_v1_rules() -> None:
+    records = [
+        _make_record(title="資訊服務三年期維運案", amount_value=3_000_000, amount_raw="NT$ 3,000,000"),
+        _make_record(title="一般設備採購案", category="財物類", amount_value=9_000_000, amount_raw="NT$ 9,000,000"),
+    ]
+
+    html = render_email_html(records, run_date=date(2026, 4, 24), high_amount_threshold=5_000_000)
+
+    assert "資訊服務三年期維運案" in html
+    assert "3年以上長約" in html
+    assert "一般設備採購案 / NT$ 9,000,000" not in html
