@@ -23,6 +23,7 @@ from core.stable_keys import effective_record_date, notification_keys, primary_n
 from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
 from storage.blob_store import BlobStateStore
+from storage.detail_cache_store import DetailCacheStore
 from storage.local_state_store import LocalJsonStateStore
 from storage.table_store import TableStateStore
 from crawler.common import build_session
@@ -74,44 +75,30 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     for record in deduped:
         _assign_stable_uid(record)
 
-    # --- Phase 1.5: Enrich detail fields (budget, bid bond) for filtered records ---
-    gov_records = [r for r in deduped if r.source == "gov_pcc"]
-    if gov_records:
+    detail_cache_store = _resolve_detail_cache_store(settings, logger)
+    if detail_cache_store:
         try:
-            enrich_gov_detail(gov_records, settings, logger)
-            logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+            detail_cache_store.apply_to_records(deduped)
         except Exception as exc:
-            logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+            logger.warning("detail_cache_apply_failed", extra={"error": str(exc)})
+    else:
+        # --- Legacy inline enrichment path, kept behind DETAIL_CACHE_ENABLED=false ---
+        gov_records = [r for r in deduped if r.source == "gov_pcc"]
+        if gov_records:
+            try:
+                enrich_gov_detail(gov_records, settings, logger)
+                logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+            except Exception as exc:
+                logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
 
-        summary = _build_bid_bond_unparsed_summary(gov_records, settings)
-        logger.info("bid_bond_unparsed_summary", extra=summary)
+            summary = _build_bid_bond_unparsed_summary(gov_records, settings)
+            logger.info("bid_bond_unparsed_summary", extra=summary)
 
-    g0v_records = [r for r in deduped if r.source == "g0v"]
-    g0v_link_counts = {
-        "resolved_official": 0,
-        "fallback_api": 0,
-        "unresolved": 0,
-    }
-    if g0v_records:
-        try:
-            session = build_session(settings)
-            for record in g0v_records:
-                enrich_g0v_record(record, settings, logger, session=session)
-                state = str(record.metadata.get("g0v_link_resolution_state", "")).strip().lower()
-                if state not in g0v_link_counts:
-                    state = "unresolved"
-                g0v_link_counts[state] += 1
-            logger.info(
-                "g0v_link_resolution_summary",
-                extra={
-                    "count": len(g0v_records),
-                    "g0v_link_resolved_count": g0v_link_counts["resolved_official"],
-                    "g0v_link_fallback_api_count": g0v_link_counts["fallback_api"],
-                    "g0v_link_unresolved_count": g0v_link_counts["unresolved"],
-                },
-            )
-        except Exception as exc:
-            logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
+        g0v_records = [r for r in deduped if r.source == "g0v"]
+        if g0v_records:
+            _enrich_g0v_records_inline(g0v_records, settings, logger)
+
+    _log_g0v_link_resolution_summary([r for r in deduped if r.source == "g0v"], logger)
 
     active_records = _exclude_expired_deadline_records(deduped, now_tw, logger)
     for record in active_records:
@@ -245,6 +232,12 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             except Exception as exc:
                 logger.exception("state_mark_failed", extra={"error": str(exc)})
                 errors.append(f"state_mark_failed: {exc}")
+
+        if persist_state and detail_cache_store and notification_sent:
+            try:
+                detail_cache_store.enqueue_missing(new_records)
+            except Exception as exc:
+                logger.warning("detail_backfill_queue_failed", extra={"error": str(exc)})
 
     return RunResult(
         crawled_count=len(all_records),
@@ -387,6 +380,52 @@ def _resolve_state_store(settings: Settings, logger: Any) -> Any:
     )
     logger.info("state_store_selected", extra={"backend": "local_json", "path": "state/notified_state.json"})
     return store
+
+
+def _resolve_detail_cache_store(settings: Settings, logger: Any) -> DetailCacheStore | None:
+    if not getattr(settings, "detail_cache_enabled", True):
+        logger.info("detail_cache_disabled")
+        return None
+    return DetailCacheStore(
+        cache_path=getattr(settings, "detail_cache_path", "state/detail_cache.json"),
+        queue_path=getattr(settings, "detail_backfill_queue_path", "state/detail_backfill_queue.json"),
+        logger=logger,
+        ttl_days=getattr(settings, "detail_cache_ttl_days", 90),
+        max_attempts=getattr(settings, "detail_backfill_max_attempts", 3),
+    )
+
+
+def _enrich_g0v_records_inline(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    try:
+        session = build_session(settings)
+        for record in records:
+            enrich_g0v_record(record, settings, logger, session=session)
+    except Exception as exc:
+        logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
+
+
+def _log_g0v_link_resolution_summary(records: list[BidRecord], logger: Any) -> None:
+    if not records:
+        return
+    counts = {
+        "resolved_official": 0,
+        "fallback_api": 0,
+        "unresolved": 0,
+    }
+    for record in records:
+        state = str(record.metadata.get("g0v_link_resolution_state", "")).strip().lower()
+        if state not in counts:
+            state = "unresolved"
+        counts[state] += 1
+    logger.info(
+        "g0v_link_resolution_summary",
+        extra={
+            "count": len(records),
+            "g0v_link_resolved_count": counts["resolved_official"],
+            "g0v_link_fallback_api_count": counts["fallback_api"],
+            "g0v_link_unresolved_count": counts["unresolved"],
+        },
+    )
 
 
 def _write_preview_html_if_needed(path_str: str, html: str, logger: Any) -> None:

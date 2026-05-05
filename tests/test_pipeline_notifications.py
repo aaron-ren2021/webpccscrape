@@ -70,6 +70,7 @@ def test_run_monitor_logs_g0v_link_resolution_summary(monkeypatch) -> None:
         recent_days=1,
         g0v_enabled=True,
         dry_run=True,
+        detail_cache_enabled=False,
     )
 
     g0v_record = _record(uid="g0v", bid_date=None, source="g0v")
@@ -115,6 +116,7 @@ def test_run_monitor_excludes_expired_deadlines_before_notifications(monkeypatch
         dry_run=True,
         github_token="token",
         github_repo="owner/repo",
+        detail_cache_enabled=False,
     )
     expired_record = _record(uid="expired", bid_date=date(2026, 4, 29))
 
@@ -170,6 +172,7 @@ def test_run_monitor_keeps_active_and_missing_deadline_records(monkeypatch) -> N
         recent_days=1,
         g0v_enabled=False,
         dry_run=True,
+        detail_cache_enabled=False,
     )
     expired_record = _record(uid="expired", bid_date=date(2026, 4, 29))
     active_record = _record(uid="active", bid_date=date(2026, 4, 29))
@@ -275,6 +278,87 @@ def test_run_monitor_marks_unknown_date_as_catch_up(monkeypatch) -> None:
 
     assert result.new_count == 1
     assert rendered_records[0].metadata["notification_candidate_reason"] == "catch_up_unknown_date"
+
+
+def test_run_monitor_uses_detail_cache_without_inline_gov_enrich(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=False,
+        dry_run=True,
+        detail_cache_enabled=True,
+    )
+    record = _record(uid="cached", bid_date=date(2026, 4, 29))
+    rendered_records = []
+
+    class DetailStore:
+        def apply_to_records(self, records):
+            records[0].budget_amount = "NT$ 1,000,000 元"
+            records[0].bid_deadline = "115/05/10 17:00"
+            records[0].metadata["detail_cache_status"] = "hit"
+
+        def enqueue_missing(self, records):
+            raise AssertionError("persist_state=False must not enqueue")
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr(
+        "core.pipeline.enrich_gov_detail",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("inline enrich disabled")),
+    )
+    monkeypatch.setattr("core.pipeline._resolve_detail_cache_store", lambda _settings, _logger: DetailStore())
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.notification_sent is True
+    assert rendered_records[0].budget_amount == "NT$ 1,000,000 元"
+    assert rendered_records[0].metadata["detail_cache_status"] == "hit"
+
+
+def test_run_monitor_logs_queue_failure_without_failing_notification(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=False,
+        dry_run=True,
+        detail_cache_enabled=True,
+    )
+    record = _record(uid="queue", bid_date=date(2026, 4, 29))
+
+    class NotifyStore:
+        def get_notified_keys(self):
+            return set()
+
+        def mark_notified(self, records):
+            return None
+
+    class DetailStore:
+        def apply_to_records(self, records):
+            return {"hit": 0, "miss": len(records)}
+
+        def enqueue_missing(self, records):
+            raise OSError("disk full")
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline._resolve_state_store", lambda _settings, _logger: NotifyStore())
+    monkeypatch.setattr("core.pipeline._resolve_detail_cache_store", lambda _settings, _logger: DetailStore())
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **_kwargs: "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=True)
+
+    assert result.notification_sent is True
+    assert result.errors == []
+    logger.warning.assert_any_call("detail_backfill_queue_failed", extra={"error": "disk full"})
 
 
 def test_resolve_state_store_uses_local_json_without_azure(monkeypatch, tmp_path) -> None:

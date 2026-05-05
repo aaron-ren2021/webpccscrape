@@ -83,6 +83,12 @@ class Settings:
 
     recent_days: int = 1
     state_retention_days: int = 90
+    detail_cache_enabled: bool = True
+    detail_cache_path: str = "state/detail_cache.json"
+    detail_backfill_queue_path: str = "state/detail_backfill_queue.json"
+    detail_cache_ttl_days: int = 90
+    detail_backfill_limit: int = 10
+    detail_backfill_max_attempts: int = 3
     high_amount_threshold: float = 5_000_000.0
     bid_bond_unparsed_sample_size: int = 5
     bid_bond_unparsed_raw_truncate: int = 80
@@ -193,6 +199,12 @@ class Settings:
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),
             state_retention_days=_parse_int(os.getenv("STATE_RETENTION_DAYS"), 90),
+            detail_cache_enabled=_parse_bool(os.getenv("DETAIL_CACHE_ENABLED"), True),
+            detail_cache_path=os.getenv("DETAIL_CACHE_PATH", "state/detail_cache.json"),
+            detail_backfill_queue_path=os.getenv("DETAIL_BACKFILL_QUEUE_PATH", "state/detail_backfill_queue.json"),
+            detail_cache_ttl_days=_parse_int(os.getenv("DETAIL_CACHE_TTL_DAYS"), 90),
+            detail_backfill_limit=_parse_int(os.getenv("DETAIL_BACKFILL_LIMIT"), 10),
+            detail_backfill_max_attempts=_parse_int(os.getenv("DETAIL_BACKFILL_MAX_ATTEMPTS"), 3),
             high_amount_threshold=_parse_float(os.getenv("HIGH_AMOUNT_THRESHOLD"), 5_000_000.0),
             bid_bond_unparsed_sample_size=_parse_int(os.getenv("BID_BOND_UNPARSED_SAMPLE_SIZE"), 5),
             bid_bond_unparsed_raw_truncate=_parse_int(os.getenv("BID_BOND_UNPARSED_RAW_TRUNCATE"), 80),

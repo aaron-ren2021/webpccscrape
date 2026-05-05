@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import random
+import hashlib
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright, TimeoutError as PwTimeout
@@ -50,6 +52,53 @@ class BatchCrawlResult:
         if self.total == 0:
             return 0.0
         return self.success_count / self.total
+
+
+def _stop_trace(
+    context: Optional[BrowserContext],
+    started: bool,
+    artifact_dir: Path,
+    batch_index: int,
+    label: str,
+    *,
+    discard: bool = False,
+) -> str:
+    if not context or not started:
+        return ""
+    try:
+        if discard:
+            context.tracing.stop()
+            return ""
+        safe_label = label.replace("/", "_")[:30]
+        path = artifact_dir / f"trace_{int(time.time())}_{batch_index}_{safe_label}.zip"
+        context.tracing.stop(path=str(path))
+        return str(path)
+    except Exception:
+        return ""
+
+
+def _html_hash(html: str) -> str:
+    if not html:
+        return ""
+    return hashlib.sha256(html.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def _captcha_marker(html: str) -> str:
+    if not html:
+        return ""
+    for marker in ["驗證碼檢核", "captcha", "recaptcha", "hcaptcha", "cf-turnstile"]:
+        if marker.lower() in html.lower():
+            return marker
+    return ""
+
+
+def _locator_count(page: Any, selector: str) -> int:
+    if page is None:
+        return 0
+    try:
+        return page.locator(selector).count()
+    except Exception:
+        return 0
 
 
 def batch_stealth_fetch(
@@ -112,6 +161,8 @@ def batch_stealth_fetch(
     session_mgr = SessionManager(session_dir=session_dir) if enable_session_persistence else None
     throttle = ThrottleController(throttle_config or ThrottleConfig())
     det_logger = DetectionLogger(artifact_dir=artifact_dir)
+    trace_dir = Path(artifact_dir or ".detection_logs")
+    trace_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -211,13 +262,27 @@ def batch_stealth_fetch(
                 # Navigate to URL
                 timed_out = False
                 html = ""
+                status_code = 0
+                final_url = url
+                trace_started = False
+                trace_path = ""
 
                 try:
-                    current_page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    if current_context:
+                        try:
+                            current_context.tracing.start(screenshots=True, snapshots=True, sources=True)
+                            trace_started = True
+                        except Exception:
+                            trace_started = False
+
+                    response = current_page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    if response:
+                        status_code = response.status
+                    final_url = current_page.url
 
                     # Wait for selector
                     try:
-                        current_page.wait_for_selector(wait_selector, timeout=timeout_ms // 2)
+                        current_page.locator(wait_selector).first.wait_for(timeout=timeout_ms // 2)
                     except PwTimeout:
                         pass
 
@@ -237,13 +302,16 @@ def batch_stealth_fetch(
 
                 except PwTimeout:
                     timed_out = True
+                    final_url = current_page.url if current_page else url
                 except Exception as exc:
                     log.warning("batch_fetch_error", extra={"url": url, "error": str(exc)})
+                    trace_path = _stop_trace(current_context, trace_started, trace_dir, idx, "unknown_failure")
                     det_logger.log_failure(
                         page=current_page,
                         html=html,
                         url=url,
                         outcome=CrawlOutcome.UNKNOWN_FAILURE,
+                        status_code=status_code,
                         proxy=identity.proxy or "",
                         user_agent=(current_profile.user_agent if current_profile else identity.fingerprint.user_agent),
                         session_id=domain,
@@ -253,6 +321,10 @@ def batch_stealth_fetch(
                             "batch_index": idx,
                             "actions": ["backoff", "rotate_identity"],
                             "human_behavior_intensity": "elevated",
+                            "final_url": final_url,
+                            "html_hash": _html_hash(html),
+                            "detected_captcha_marker": _captcha_marker(html),
+                            "trace_path": trace_path,
                         },
                     )
                     result.failed.append((url, f"unknown_failure: {exc}"))
@@ -271,10 +343,11 @@ def batch_stealth_fetch(
                     continue
 
                 # Classify outcome
-                selector_found = bool(current_page.query_selector(wait_selector)) if not timed_out else False
+                selector_found = _locator_count(current_page, wait_selector) > 0 if not timed_out else False
                 outcome = classify_outcome_with_page(
                     page=current_page,
                     html=html,
+                    status_code=status_code,
                     expected_selector_found=selector_found,
                     timed_out=timed_out,
                     url=url,
@@ -286,11 +359,17 @@ def batch_stealth_fetch(
                     context={"runner": "batch"},
                 )
 
+                if outcome != CrawlOutcome.SUCCESS:
+                    trace_path = _stop_trace(current_context, trace_started, trace_dir, idx, str(outcome))
+                else:
+                    _stop_trace(current_context, trace_started, trace_dir, idx, "success", discard=True)
+
                 det_logger.log_failure(
                     page=current_page,
                     html=html,
                     url=url,
                     outcome=outcome,
+                    status_code=status_code,
                     proxy=identity.proxy or "",
                     user_agent=(current_profile.user_agent if current_profile else identity.fingerprint.user_agent),
                     session_id=domain,
@@ -299,6 +378,10 @@ def batch_stealth_fetch(
                         "batch_index": idx,
                         "actions": list(strategy_plan.actions),
                         "human_behavior_intensity": strategy_plan.human_behavior_intensity,
+                        "final_url": final_url,
+                        "html_hash": _html_hash(html),
+                        "detected_captcha_marker": _captcha_marker(html),
+                        "trace_path": trace_path,
                     },
                 )
 

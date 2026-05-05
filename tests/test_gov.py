@@ -106,7 +106,7 @@ def test_fetch_bids_marks_degraded_mode_after_rate_limited_circuit_breaker(monke
     <html><body>
       <table><tbody>
         <tr>
-          <td>115/04/24</td>
+          <td>115/05/24</td>
           <td><a href="/tps/QueryTender/query/searchTenderDetail?pkPmsMain=AAA">測試標案</a></td>
           <td>測試機關</td>
         </tr>
