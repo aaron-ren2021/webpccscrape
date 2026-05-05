@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from core.config import Settings
 from core.models import BidRecord
-from core.pipeline import _resolve_state_store, run_monitor
+from core.pipeline import merge_taiwanbuying_hints_into_gov_records, _resolve_state_store, run_monitor
 from storage.local_state_store import LocalJsonStateStore
 
 
@@ -39,8 +39,8 @@ def test_run_monitor_includes_old_unnotified_records(monkeypatch) -> None:
     old_record = _record(uid="old", bid_date=date(2026, 4, 1))
     today_record = _record(uid="today", bid_date=date(2026, 4, 24))
 
-    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [old_record, today_record])
-    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [old_record, today_record])
     monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
     monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
     monkeypatch.setattr("core.pipeline.render_email_html", lambda **_kwargs: "<html></html>")
@@ -359,6 +359,143 @@ def test_run_monitor_logs_queue_failure_without_failing_notification(monkeypatch
     assert result.notification_sent is True
     assert result.errors == []
     logger.warning.assert_any_call("detail_backfill_queue_failed", extra={"error": "disk full"})
+
+
+def test_taiwanbuying_candidate_unmatched_does_not_notify(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(g0v_enabled=False, dry_run=True, detail_cache_enabled=False)
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.metadata = {
+        "candidate_only": True,
+        "category_hint": "computer_edu",
+        "category_hint_source": "taiwanbuying",
+    }
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [candidate])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("candidate must not render")))
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("candidate must not send")))
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.filtered_count == 0
+    assert result.new_count == 0
+    assert result.notification_sent is False
+
+
+def test_taiwanbuying_hint_merge_preserves_gov_official_fields(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(g0v_enabled=False, dry_run=True, detail_cache_enabled=False)
+    gov_record = _record(uid="gov", bid_date=date(2026, 4, 29), source="gov_pcc")
+    gov_record.title = "資訊設備採購案"
+    gov_record.organization = "某某大學"
+    gov_record.amount_raw = "100萬"
+    gov_record.amount_value = 1_000_000
+    gov_record.url = "https://gov.example/bid"
+    gov_record.metadata = {"tender_id": "A-001"}
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.title = "不同的台採標題"
+    candidate.organization = "某某大學"
+    candidate.amount_raw = "999萬"
+    candidate.amount_value = 9_990_000
+    candidate.url = "https://tw.example/bid"
+    candidate.category = "電腦類"
+    candidate.metadata = {
+        "candidate_only": True,
+        "category_hint": "computer_edu",
+        "category_hint_source": "taiwanbuying",
+        "tender_id": "A-001",
+    }
+    rendered_records = []
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [candidate])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [gov_record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.notification_sent is True
+    output = rendered_records[0]
+    assert output.source == "gov_pcc"
+    assert output.title == "資訊設備採購案"
+    assert output.organization == "某某大學"
+    assert output.amount_value == 1_000_000
+    assert output.url == "https://gov.example/bid"
+    assert output.metadata["taiwanbuying_hint_matched"] is True
+    assert output.metadata["taiwanbuying_match_method"] == "tender_id_exact"
+    assert output.metadata["taiwanbuying_candidate_url"] == "https://tw.example/bid"
+
+
+def test_taiwanbuying_hint_does_not_merge_into_g0v() -> None:
+    logger = MagicMock()
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.title = "資訊設備採購案"
+    candidate.organization = "某某大學"
+    candidate.category = "電腦類"
+    candidate.metadata = {
+        "candidate_only": True,
+        "category_hint": "computer_edu",
+        "tender_id": "A-001",
+    }
+    assert merge_taiwanbuying_hints_into_gov_records([], [candidate], logger) == []
+
+
+def test_taiwanbuying_fuzzy_ambiguous_same_school_same_day_does_not_merge() -> None:
+    logger = MagicMock()
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.title = "資訊設備採購案"
+    candidate.organization = "某某大學"
+    candidate.category = "電腦類"
+    candidate.metadata = {"candidate_only": True, "category_hint": "computer_edu"}
+    gov_a = _record(uid="a", bid_date=date(2026, 4, 29), source="gov_pcc")
+    gov_a.title = "資訊設備採購案A"
+    gov_b = _record(uid="b", bid_date=date(2026, 4, 29), source="gov_pcc")
+    gov_b.title = "資訊設備採購案B"
+
+    merged = merge_taiwanbuying_hints_into_gov_records([gov_a, gov_b], [candidate], logger)
+
+    assert all("taiwanbuying_hint_matched" not in record.metadata for record in merged)
+    logger.warning.assert_any_call(
+        "taiwanbuying_hint_ambiguous",
+        extra={
+            "reason": "fuzzy_score_gap_too_small",
+            "title": "資訊設備採購案",
+            "organization": "某某大學",
+            "url": "https://example.com/tw",
+        },
+    )
+
+
+def test_candidate_only_record_blocked_before_formatter_and_send(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(g0v_enabled=False, dry_run=True, detail_cache_enabled=False)
+    record = _record(uid="bad", bid_date=date(2026, 4, 29), source="gov_pcc")
+    record.metadata = {"candidate_only": True}
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("candidate_only must not render")))
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("candidate_only must not send")))
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.new_count == 0
+    assert result.notification_sent is False
+    logger.warning.assert_any_call(
+        "candidate_only_record_blocked_before_notification",
+        extra={
+            "title": "測試案-bad",
+            "organization": "某某大學",
+            "source": "gov_pcc",
+            "url": "https://example.com/bad",
+        },
+    )
 
 
 def test_resolve_state_store_uses_local_json_without_azure(monkeypatch, tmp_path) -> None:

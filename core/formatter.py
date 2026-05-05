@@ -88,7 +88,7 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
             f"{escape(item.organization)} / {escape(item.title)} / {format_amount(item)}"
             f"（{escape('、'.join(decision.reasons[:2]))}）"
         )
-        for item, decision in high_amount_rows[:5]
+        for item, decision in high_amount_rows[:3]
     )
     if not high_amount_summary:
         high_amount_summary = "無"

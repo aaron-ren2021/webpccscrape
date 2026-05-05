@@ -152,6 +152,14 @@ INTERNAL_BIZ_KEYWORDS = [
 
 # 排除關鍵字：非資訊設備案件（醫療、實驗室、量測儀器）
 EXCLUDE_THEME_KEYWORDS = [
+    "防水",
+    "消防",
+    "水電",
+    "遊具",
+    "實驗耗材",
+    "醫療設備",
+    "飲水機",
+    "窗簾",
     # 醫療設備
     "節律系統",
     "心律調節器",
@@ -442,6 +450,11 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     return _has_workstation_context_match(text)
 
 
+def has_hard_exclusion(title: str, summary: str = "", category: str = "") -> bool:
+    text = f"{title} {summary} {category}".lower()
+    return any(keyword.lower() in text for keyword in EXCLUDE_THEME_KEYWORDS)
+
+
 def infer_unit_type(org_name: str) -> str:
     """識別教育機構類型（依優先順序）"""
     # 軍校識別（優先於大學/學院）
@@ -526,10 +539,17 @@ def filter_bids(records: Iterable[BidRecord]) -> list[BidRecord]:
 
         if not is_edu_org and not has_edu_context:
             continue
-        if not has_theme_match(record.title, record.summary, record.category):
+        if has_hard_exclusion(record.title, record.summary, record.category):
+            continue
+
+        metadata = record.metadata or {}
+        has_computer_edu_hint = metadata.get("category_hint") == "computer_edu"
+        if not has_computer_edu_hint and not has_theme_match(record.title, record.summary, record.category):
             continue
         record.unit_type = infer_unit_type(record.organization)
         record.tags = infer_theme_tags(record.title, record.summary, record.category)
+        if has_computer_edu_hint and "電腦" not in record.tags:
+            record.tags.append("電腦")
         output.append(record)
     return output
 

@@ -103,6 +103,7 @@ class Settings:
     taiwanbuying_date_selectors: list[str] = field(default_factory=lambda: [".date", ".publish-date", "time", "td:nth-child(1)"])
     taiwanbuying_amount_selectors: list[str] = field(default_factory=lambda: [".amount", ".price", "td:nth-child(5)"])
     taiwanbuying_summary_selectors: list[str] = field(default_factory=lambda: [".summary", ".desc", "td:nth-child(4)"])
+    taiwanbuying_category_selectors: list[str] = field(default_factory=lambda: [".category", ".type", "td:nth-child(6)"])
     taiwanbuying_link_selectors: list[str] = field(default_factory=lambda: ["a"])
 
     gov_url: str = "https://web.pcc.gov.tw/pis/"
@@ -224,6 +225,8 @@ class Settings:
             or [".amount", ".price", "td:nth-child(5)"],
             taiwanbuying_summary_selectors=_parse_csv(os.getenv("TAIWANBUYING_SUMMARY_SELECTORS"))
             or [".summary", ".desc", "td:nth-child(4)"],
+            taiwanbuying_category_selectors=_parse_csv(os.getenv("TAIWANBUYING_CATEGORY_SELECTORS"))
+            or [".category", ".type", "td:nth-child(6)"],
             taiwanbuying_link_selectors=_parse_csv(os.getenv("TAIWANBUYING_LINK_SELECTORS")) or ["a"],
             gov_url=os.getenv("GOV_URL", "https://web.pcc.gov.tw/pis/"),
             gov_method=os.getenv("GOV_METHOD", "GET").upper(),

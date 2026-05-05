@@ -5,6 +5,7 @@ from typing import Any
 from bs4 import Tag
 
 from core.config import Settings
+from core.filters import is_educational_org
 from core.models import BidRecord
 from core.normalize import parse_amount, parse_bid_date
 
@@ -93,10 +94,24 @@ def _parse_records(html: str, settings: Settings) -> list[BidRecord]:
         date_text = pick_first_text(row, settings.taiwanbuying_date_selectors)
         amount_text = pick_first_text(row, settings.taiwanbuying_amount_selectors)
         summary = pick_first_text(row, settings.taiwanbuying_summary_selectors)
+        category = pick_first_text(row, settings.taiwanbuying_category_selectors)
         link = pick_first_attr(row, settings.taiwanbuying_link_selectors, "href")
 
         bid_date = parse_bid_date(date_text)
         amount_value = parse_amount(amount_text)
+        url = normalize_url(settings.taiwanbuying_url, link)
+        metadata: dict[str, Any] = {
+            "raw_date": date_text,
+            "taiwanbuying_category": category,
+        }
+        if "電腦類" in (category or "") and is_educational_org(org):
+            metadata.update(
+                {
+                    "candidate_only": True,
+                    "category_hint": "computer_edu",
+                    "category_hint_source": SOURCE_NAME,
+                }
+            )
 
         output.append(
             BidRecord(
@@ -106,11 +121,10 @@ def _parse_records(html: str, settings: Settings) -> list[BidRecord]:
                 amount_raw=amount_text,
                 amount_value=amount_value,
                 source=SOURCE_NAME,
-                url=normalize_url(settings.taiwanbuying_url, link),
+                url=url,
                 summary=summary,
-                metadata={
-                    "raw_date": date_text,
-                },
+                category=category,
+                metadata=metadata,
             )
         )
     return output

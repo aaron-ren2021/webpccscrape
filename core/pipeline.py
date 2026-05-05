@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from crawler.gov import fetch_bids as fetch_gov_bids
@@ -18,7 +21,7 @@ from core.dedup import deduplicate_bids
 from core.filters import filter_bids
 from core.formatter import find_earliest_deadline, render_email_html, render_email_subject
 from core.models import BidRecord, RunResult, SourceRunStatus
-from core.normalize import is_bid_deadline_expired
+from core.normalize import is_bid_deadline_expired, normalize_org, normalize_text
 from core.stable_keys import effective_record_date, notification_keys, primary_notification_key
 from notify.dispatcher import send_email
 from notify.github_notify import create_bid_issues
@@ -68,8 +71,18 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             logger.exception("source_failed", extra={"source": source_name, "error": str(exc)})
             source_status.append(SourceRunStatus(source=source_name, success=False, count=0, error=str(exc)))
 
+    gov_records = [record for record in all_records if record.source == "gov_pcc"]
+    g0v_records = [record for record in all_records if record.source == "g0v"]
+    taiwanbuying_candidates = [record for record in all_records if record.source == "taiwanbuying"]
+    gov_records = merge_taiwanbuying_hints_into_gov_records(
+        gov_records=gov_records,
+        taiwanbuying_candidates=taiwanbuying_candidates,
+        logger=logger,
+    )
+    formal_records = gov_records + g0v_records
+
     # --- Phase 1: keyword-based filter + dedup ---
-    filtered = filter_bids(all_records)
+    filtered = filter_bids(formal_records)
     deduped = deduplicate_bids(filtered)
 
     for record in deduped:
@@ -101,6 +114,7 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     _log_g0v_link_resolution_summary([r for r in deduped if r.source == "g0v"], logger)
 
     active_records = _exclude_expired_deadline_records(deduped, now_tw, logger)
+    active_records = _block_candidate_only_records(active_records, logger)
     for record in active_records:
         _assign_stable_uid(record)
 
@@ -185,6 +199,19 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
     if not new_records:
         logger.info("no new bids")
     else:
+        new_records = _block_candidate_only_records(new_records, logger)
+        if not new_records:
+            logger.info("no new bids")
+            return RunResult(
+                crawled_count=len(all_records),
+                filtered_count=len(filtered),
+                deduped_count=len(deduped),
+                new_count=0,
+                source_status=source_status,
+                notification_sent=False,
+                notification_backend=notification_backend,
+                errors=errors,
+            )
         html_content = render_email_html(
             records=new_records,
             run_date=today,
@@ -275,6 +302,165 @@ def _exclude_expired_deadline_records(
 
 def _assign_stable_uid(record: BidRecord) -> None:
     record.uid = primary_notification_key(record)
+
+
+def merge_taiwanbuying_hints_into_gov_records(
+    gov_records: list[BidRecord],
+    taiwanbuying_candidates: list[BidRecord],
+    logger: Any,
+) -> list[BidRecord]:
+    for candidate in taiwanbuying_candidates:
+        metadata = candidate.metadata or {}
+        if metadata.get("category_hint") != "computer_edu":
+            continue
+        if metadata.get("candidate_only") is not True:
+            continue
+
+        match = _match_taiwanbuying_candidate_to_gov(candidate, gov_records, logger)
+        if not match:
+            continue
+
+        gov_record, method = match
+        gov_record.metadata.update(
+            {
+                "taiwanbuying_hint_matched": True,
+                "taiwanbuying_match_method": method,
+                "taiwanbuying_candidate_url": candidate.url,
+                "taiwanbuying_candidate_category": candidate.category
+                or metadata.get("taiwanbuying_category", ""),
+                "taiwanbuying_candidate_date": candidate.bid_date.isoformat()
+                if candidate.bid_date
+                else "",
+            }
+        )
+    return gov_records
+
+
+def _match_taiwanbuying_candidate_to_gov(
+    candidate: BidRecord,
+    gov_records: list[BidRecord],
+    logger: Any,
+) -> tuple[BidRecord, str] | None:
+    candidate_ids = _tender_identity_values(candidate)
+    if candidate_ids:
+        exact_matches = [
+            record
+            for record in gov_records
+            if candidate_ids.intersection(_tender_identity_values(record))
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0], "tender_id_exact"
+        if len(exact_matches) > 1:
+            _log_ambiguous_taiwanbuying_hint(candidate, logger, "tender_id_multiple_matches")
+            return None
+
+    candidate_date = candidate.bid_date or candidate.announcement_date
+    if candidate_date is None:
+        return None
+
+    normalized_org = normalize_org(candidate.organization)
+    normalized_title = normalize_text(candidate.title)
+    exact_title_matches = [
+        record
+        for record in gov_records
+        if normalize_org(record.organization) == normalized_org
+        and normalize_text(record.title) == normalized_title
+        and _date_within_one_day(candidate_date, record.bid_date or record.announcement_date)
+    ]
+    if len(exact_title_matches) == 1:
+        return exact_title_matches[0], "org_title_date"
+    if len(exact_title_matches) > 1:
+        _log_ambiguous_taiwanbuying_hint(candidate, logger, "org_title_date_multiple_matches")
+        return None
+
+    scored_matches: list[tuple[float, BidRecord]] = []
+    for record in gov_records:
+        if normalize_org(record.organization) != normalized_org:
+            continue
+        if not _date_within_one_day(candidate_date, record.bid_date or record.announcement_date):
+            continue
+        score = SequenceMatcher(None, normalized_title, normalize_text(record.title)).ratio()
+        if score >= 0.92:
+            scored_matches.append((score, record))
+
+    if not scored_matches:
+        return None
+
+    scored_matches.sort(key=lambda item: item[0], reverse=True)
+    if len(scored_matches) > 1 and scored_matches[0][0] - scored_matches[1][0] < 0.03:
+        _log_ambiguous_taiwanbuying_hint(candidate, logger, "fuzzy_score_gap_too_small")
+        return None
+    return scored_matches[0][1], "org_title_fuzzy_date"
+
+
+def _tender_identity_values(record: BidRecord) -> set[str]:
+    metadata = record.metadata or {}
+    values: set[str] = set()
+    for key in [
+        "tender_id",
+        "tenderId",
+        "job_number",
+        "g0v_job_number",
+        "case_number",
+        "case_no",
+        "標案案號",
+    ]:
+        value = normalize_text(str(metadata.get(key) or ""))
+        if value:
+            values.add(value)
+    for key in ["job_number", "tender_id", "case_no"]:
+        value = _query_value(record.url, key)
+        if value:
+            values.add(normalize_text(value))
+    title_match = re.search(r"(?:案號|標案案號)[:：\s]*([A-Za-z0-9_-]{3,})", record.title)
+    if title_match:
+        values.add(normalize_text(title_match.group(1)))
+    return values
+
+
+def _query_value(url: str, key: str) -> str:
+    if not url:
+        return ""
+    values = parse_qs(urlparse(url).query).get(key)
+    if not values:
+        return ""
+    return str(values[0]).strip()
+
+
+def _date_within_one_day(left: date, right: date | None) -> bool:
+    if right is None:
+        return False
+    return abs((left - right).days) <= 1
+
+
+def _log_ambiguous_taiwanbuying_hint(candidate: BidRecord, logger: Any, reason: str) -> None:
+    logger.warning(
+        "taiwanbuying_hint_ambiguous",
+        extra={
+            "reason": reason,
+            "title": candidate.title,
+            "organization": candidate.organization,
+            "url": candidate.url,
+        },
+    )
+
+
+def _block_candidate_only_records(records: list[BidRecord], logger: Any) -> list[BidRecord]:
+    output: list[BidRecord] = []
+    for record in records:
+        if (record.metadata or {}).get("candidate_only") is True:
+            logger.warning(
+                "candidate_only_record_blocked_before_notification",
+                extra={
+                    "title": record.title,
+                    "organization": record.organization,
+                    "source": record.source,
+                    "url": record.url,
+                },
+            )
+            continue
+        output.append(record)
+    return output
 
 
 def _build_bid_bond_unparsed_summary(

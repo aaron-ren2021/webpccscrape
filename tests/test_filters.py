@@ -74,6 +74,38 @@ def test_filter_bids_by_org_and_theme() -> None:
     assert output[0].title == "AI運算伺服器採購案"
 
 
+def test_computer_edu_hint_passes_for_education_org_without_exclusion() -> None:
+    record = _bid("115年度設備採購", "某某大學")
+    record.metadata = {"category_hint": "computer_edu"}
+
+    output = filter_bids([record])
+
+    assert output == [record]
+
+
+def test_computer_edu_hint_still_excludes_hospitals_and_clinics() -> None:
+    records = [
+        _bid("115年度設備採購", "台大醫院"),
+        _bid("115年度設備採購", "某某診所"),
+        _bid("115年度設備採購", "國立陽明交通大學醫學院"),
+    ]
+    for record in records:
+        record.metadata = {"category_hint": "computer_edu"}
+
+    output_orgs = {record.organization for record in filter_bids(records)}
+
+    assert "台大醫院" not in output_orgs
+    assert "某某診所" not in output_orgs
+    assert "國立陽明交通大學醫學院" in output_orgs
+
+
+def test_computer_edu_hint_cannot_bypass_hard_exclusions() -> None:
+    for title in ["防水工程採購", "消防設備採購", "水電改善", "遊具採購", "實驗耗材採購", "醫療設備採購", "飲水機採購", "窗簾採購"]:
+        record = _bid(title, "某某大學")
+        record.metadata = {"category_hint": "computer_edu"}
+        assert filter_bids([record]) == [], title
+
+
 def test_ai_priority_core_cases() -> None:
     core_cases = [
         ("國立臺北科技大學", "AI運算伺服器", True),
