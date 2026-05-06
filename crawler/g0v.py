@@ -365,9 +365,21 @@ def _extract_detail_fields(
     # as colon-delimited keys, e.g. "採購資料:預算金額".
     budget = _pick_text(detail, ["採購資料:預算金額", "預算金額", "budget_amount", "budget"])
     if budget:
-        record.amount_raw = budget
-        record.amount_value = parse_amount(budget)
         record.budget_amount = budget
+        amount_value = parse_amount(budget)
+        if amount_value is not None:
+            record.amount_raw = budget
+            record.amount_value = amount_value
+        elif logger:
+            logger.warning(
+                "g0v_detail_budget_parse_failed",
+                extra={
+                    "title": record.title[:80],
+                    "url": record.url,
+                    "budget": budget[:120],
+                    "existing_amount_value": record.amount_value,
+                },
+            )
     elif (
         detail.get("budget_public") is False
         or _is_no_value(_pick_text(detail, ["採購資料:預算金額是否公開", "預算金額是否公開"]))
