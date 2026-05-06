@@ -94,22 +94,10 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             detail_cache_store.apply_to_records(deduped)
         except Exception as exc:
             logger.warning("detail_cache_apply_failed", extra={"error": str(exc)})
-    else:
-        # --- Legacy inline enrichment path, kept behind DETAIL_CACHE_ENABLED=false ---
-        gov_records = [r for r in deduped if r.source == "gov_pcc"]
-        if gov_records:
-            try:
-                enrich_gov_detail(gov_records, settings, logger)
-                logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
-            except Exception as exc:
-                logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
 
-            summary = _build_bid_bond_unparsed_summary(gov_records, settings)
-            logger.info("bid_bond_unparsed_summary", extra=summary)
-
-        g0v_records = [r for r in deduped if r.source == "g0v"]
-        if g0v_records:
-            _enrich_g0v_records_inline(g0v_records, settings, logger)
+    # Read-through fallback: cache hits are used first, then records that still
+    # lack amount/deadline detail are enriched inline before rendering.
+    _enrich_missing_details_inline(deduped, settings, logger)
 
     _log_g0v_link_resolution_summary([r for r in deduped if r.source == "g0v"], logger)
 
@@ -588,6 +576,49 @@ def _enrich_g0v_records_inline(records: list[BidRecord], settings: Settings, log
             enrich_g0v_record(record, settings, logger, session=session)
     except Exception as exc:
         logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
+
+
+def _enrich_missing_details_inline(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    gov_records = [
+        record
+        for record in records
+        if record.source == "gov_pcc" and _needs_detail_or_amount(record)
+    ]
+    if gov_records:
+        try:
+            enrich_gov_detail(gov_records, settings, logger)
+            logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+        except Exception as exc:
+            logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+
+        summary = _build_bid_bond_unparsed_summary(gov_records, settings)
+        logger.info("bid_bond_unparsed_summary", extra=summary)
+
+    g0v_records = [
+        record
+        for record in records
+        if record.source == "g0v" and _needs_detail_or_amount(record)
+    ]
+    if g0v_records:
+        _enrich_g0v_records_inline(g0v_records, settings, logger)
+
+
+def _needs_detail_or_amount(record: BidRecord) -> bool:
+    return (
+        _missing_amount(record)
+        or _is_detail_missing(record.budget_amount)
+        or _is_detail_missing(record.bid_bond)
+        or _is_detail_missing(record.bid_deadline)
+        or _is_detail_missing(record.bid_opening_time)
+    )
+
+
+def _missing_amount(record: BidRecord) -> bool:
+    return record.amount_value is None and str(record.budget_amount or "").strip() != "未公開"
+
+
+def _is_detail_missing(value: str) -> bool:
+    return str(value or "").strip().lower() in {"", "none", "null", "無", "無提供", "n/a", "詳見連結"}
 
 
 def _log_g0v_link_resolution_summary(records: list[BidRecord], logger: Any) -> None:

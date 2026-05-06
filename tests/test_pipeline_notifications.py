@@ -280,7 +280,7 @@ def test_run_monitor_marks_unknown_date_as_catch_up(monkeypatch) -> None:
     assert rendered_records[0].metadata["notification_candidate_reason"] == "catch_up_unknown_date"
 
 
-def test_run_monitor_uses_detail_cache_without_inline_gov_enrich(monkeypatch) -> None:
+def test_run_monitor_uses_complete_detail_cache_without_inline_gov_enrich(monkeypatch) -> None:
     logger = MagicMock()
     settings = Settings(
         recent_days=1,
@@ -294,7 +294,9 @@ def test_run_monitor_uses_detail_cache_without_inline_gov_enrich(monkeypatch) ->
     class DetailStore:
         def apply_to_records(self, records):
             records[0].budget_amount = "NT$ 1,000,000 元"
+            records[0].bid_bond = "免繳"
             records[0].bid_deadline = "115/05/10 17:00"
+            records[0].bid_opening_time = "115/05/11 10:00"
             records[0].metadata["detail_cache_status"] = "hit"
 
         def enqueue_missing(self, records):
@@ -318,6 +320,168 @@ def test_run_monitor_uses_detail_cache_without_inline_gov_enrich(monkeypatch) ->
     assert result.notification_sent is True
     assert rendered_records[0].budget_amount == "NT$ 1,000,000 元"
     assert rendered_records[0].metadata["detail_cache_status"] == "hit"
+
+
+def test_run_monitor_enriches_cache_miss_before_render(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=False,
+        dry_run=True,
+        detail_cache_enabled=True,
+    )
+    amount_record = _record(uid="missing-amount", bid_date=date(2026, 4, 29))
+    amount_record.amount_raw = ""
+    amount_record.amount_value = None
+    amount_record.budget_amount = "已公開（金額見詳細頁）"
+    amount_record.bid_bond = "免繳"
+    amount_record.bid_deadline = "115/05/10 17:00"
+    amount_record.bid_opening_time = "115/05/11 10:00"
+    deadline_record = _record(uid="missing-deadline", bid_date=date(2026, 4, 29))
+    deadline_record.bid_bond = "免繳"
+    deadline_record.bid_deadline = "詳見連結"
+    deadline_record.bid_opening_time = "115/05/11 10:00"
+    rendered_records = []
+    enriched_titles = []
+
+    class DetailStore:
+        def apply_to_records(self, records):
+            for record in records:
+                record.metadata["detail_cache_status"] = "miss"
+            return {"hit": 0, "miss": len(records)}
+
+        def enqueue_missing(self, records):
+            raise AssertionError("persist_state=False must not enqueue")
+
+    def _fake_enrich(records, _settings, _logger):
+        enriched_titles.extend(record.title for record in records)
+        for record in records:
+            record.budget_amount = "NT$ 9,500,000 元"
+            record.amount_raw = "NT$ 9,500,000 元"
+            record.amount_value = 9_500_000.0
+            record.bid_bond = "免繳"
+            record.bid_deadline = "115/05/10 17:00"
+            record.bid_opening_time = "115/05/11 10:00"
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [amount_record, deadline_record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.enrich_gov_detail", _fake_enrich)
+    monkeypatch.setattr("core.pipeline._resolve_detail_cache_store", lambda _settings, _logger: DetailStore())
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.notification_sent is True
+    assert enriched_titles == ["測試案-missing-amount", "測試案-missing-deadline"]
+    assert {record.budget_amount for record in rendered_records} == {"NT$ 9,500,000 元"}
+    assert {record.amount_value for record in rendered_records} == {9_500_000.0}
+
+
+def test_run_monitor_failed_inline_fallback_preserves_existing_values(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=False,
+        dry_run=True,
+        detail_cache_enabled=True,
+    )
+    record = _record(uid="fallback-fails", bid_date=date(2026, 4, 29))
+    record.amount_raw = "100萬"
+    record.amount_value = 1_000_000
+    record.budget_amount = "NT$ 1,000,000 元"
+    record.bid_bond = "免繳"
+    record.bid_deadline = "詳見連結"
+    record.bid_opening_time = "115/05/11 10:00"
+    rendered_records = []
+
+    class DetailStore:
+        def apply_to_records(self, records):
+            records[0].metadata["detail_cache_status"] = "miss"
+            return {"hit": 0, "miss": 1}
+
+        def enqueue_missing(self, records):
+            raise AssertionError("persist_state=False must not enqueue")
+
+    def _failing_enrich(_records, _settings, _logger):
+        raise RuntimeError("captcha")
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.enrich_gov_detail", _failing_enrich)
+    monkeypatch.setattr("core.pipeline._resolve_detail_cache_store", lambda _settings, _logger: DetailStore())
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.notification_sent is True
+    assert rendered_records[0].amount_raw == "100萬"
+    assert rendered_records[0].amount_value == 1_000_000
+    assert rendered_records[0].budget_amount == "NT$ 1,000,000 元"
+    assert rendered_records[0].bid_bond == "免繳"
+    assert rendered_records[0].bid_deadline == "詳見連結"
+    assert rendered_records[0].bid_opening_time == "115/05/11 10:00"
+    logger.warning.assert_any_call("gov_detail_enrich_failed", extra={"error": "captcha"})
+
+
+def test_run_monitor_g0v_api_fills_amount_when_detail_cache_misses(monkeypatch) -> None:
+    logger = MagicMock()
+    settings = Settings(
+        recent_days=1,
+        g0v_enabled=True,
+        dry_run=True,
+        detail_cache_enabled=True,
+    )
+    record = _record(uid="g0v-miss", bid_date=date(2026, 4, 29), source="g0v")
+    record.amount_raw = ""
+    record.amount_value = None
+    record.metadata = {
+        "g0v_tender_api_url": "https://pcc-api.openfun.app/api/tender?unit_id=U&job_number=J",
+    }
+    rendered_records = []
+
+    class DetailStore:
+        def apply_to_records(self, records):
+            records[0].metadata["detail_cache_status"] = "miss"
+            return {"hit": 0, "miss": 1}
+
+        def enqueue_missing(self, records):
+            raise AssertionError("persist_state=False must not enqueue")
+
+    def _fake_g0v_enrich(record, _settings, _logger, session=None):
+        record.budget_amount = "9,500,000元"
+        record.amount_raw = "9,500,000元"
+        record.amount_value = 9_500_000.0
+        record.bid_bond = "免繳"
+        record.bid_deadline = "115/05/10 17:00"
+        record.bid_opening_time = "115/05/11 10:00"
+        record.metadata["g0v_link_resolution_state"] = "fallback_api"
+        return True
+
+    monkeypatch.setattr("core.pipeline.fetch_taiwanbuying_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_gov_bids", lambda _s, _l: [])
+    monkeypatch.setattr("core.pipeline.fetch_g0v_bids", lambda _s, _l: [record])
+    monkeypatch.setattr("core.pipeline.filter_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.deduplicate_bids", lambda records: list(records))
+    monkeypatch.setattr("core.pipeline.enrich_g0v_record", _fake_g0v_enrich)
+    monkeypatch.setattr("core.pipeline.build_session", lambda _settings: object())
+    monkeypatch.setattr("core.pipeline._resolve_detail_cache_store", lambda _settings, _logger: DetailStore())
+    monkeypatch.setattr("core.pipeline.render_email_html", lambda **kwargs: rendered_records.extend(kwargs["records"]) or "<html></html>")
+    monkeypatch.setattr("core.pipeline.send_email", lambda *_args, **_kwargs: "dry_run")
+    monkeypatch.setattr("core.pipeline.find_earliest_deadline", lambda _records: None)
+
+    result = run_monitor(settings=settings, logger=logger, persist_state=False)
+
+    assert result.notification_sent is True
+    assert rendered_records[0].budget_amount == "9,500,000元"
+    assert rendered_records[0].amount_value == 9_500_000.0
 
 
 def test_run_monitor_logs_queue_failure_without_failing_notification(monkeypatch) -> None:
