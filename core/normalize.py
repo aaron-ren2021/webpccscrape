@@ -36,37 +36,121 @@ def parse_amount(value: str) -> Optional[float]:
     if not value:
         return None
     text = unicodedata.normalize("NFKC", value)
-    
-    # Define multipliers
-    multiplier = 1.0
-    if "億" in text:
-        multiplier = 100000000.0
-    elif "萬" in text:
-        multiplier = 10000.0
-    elif "千元" in text:
-        multiplier = 1000.0
-    
-    # Enhanced regex patterns for various formats
-    patterns = [
-        r"預算金額[\uff1a:]​*新?臺?幣?​*(\d{1,3}(,\d{3})*)​*元?",  # 預算金額：新臺幣 X 元
-        r"底價[\uff1a:]​*(\d{1,3}(,\d{3})*)",  # 底價：X
-        r"NT\$?​*(\d{1,3}(,\d{3})*)",  # NT$ X or NT X
-        r"([0-9][0-9,\.]*)",  # Fallback: any digit sequence
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, text.replace(",", ""))
-        if match:
-            try:
-                # Extract first group (the number)
-                num_str = match.group(1) if "(" in pattern else match.group(0)
-                num_str = num_str.replace(",", "").replace(".", "")
-                amount = float(num_str)
-                return amount * multiplier
-            except (ValueError, IndexError):
-                continue
-    
+    text = text.replace("\u3000", " ").strip()
+
+    if _looks_like_non_amount(text):
+        return None
+
+    total = _parse_amount_with_units(text)
+    if total is not None:
+        return total
+
+    plain = _parse_plain_amount(text)
+    if plain is not None:
+        return plain
+
     return None
+
+
+def _looks_like_non_amount(text: str) -> bool:
+    lowered = text.lower()
+    if "%" in text or "％" in text:
+        return True
+    if not re.search(r"\d", text):
+        return True
+    has_explicit_money_context = bool(
+        re.search(r"(預算金額|採購金額|決標金額|底價|新[臺台]幣|[臺台]幣|NT\$?|NTD|\d+\s*元)", text, re.IGNORECASE)
+    )
+    non_amount_markers = [
+        "手續費",
+        "電子領標",
+        "領標費",
+        "下載費",
+        "系統使用費",
+        "廠商家數",
+        "件數",
+        "電話",
+        "傳真",
+        "統一編號",
+        "郵遞區號",
+        "日期",
+        "時間",
+        "截止",
+        "開標",
+        "履約期限",
+        "民國",
+        "年",
+        "月",
+        "日",
+    ]
+    # Some sources return mixed field text in a single cell (for example:
+    # "預算金額：9,500,000元 截止投標：115/05/05 17:00"). In that case we should
+    # still parse the amount and not discard it just because deadline/date words exist.
+    if has_explicit_money_context:
+        non_amount_markers = [marker for marker in non_amount_markers if marker not in {"日期", "時間", "截止", "開標", "民國", "年", "月", "日"}]
+    if any(marker in text for marker in non_amount_markers):
+        return True
+    return lowered in {"none", "null", "n/a"}
+
+
+def _parse_amount_with_units(text: str) -> Optional[float]:
+    compact = re.sub(r"\s+", "", text)
+    normalized = (
+        compact.replace("新臺幣", "")
+        .replace("新台幣", "")
+        .replace("臺幣", "")
+        .replace("台幣", "")
+        .replace("NT$", "")
+        .replace("NTD", "")
+        .replace("元整", "元")
+    )
+    unit_pattern = re.compile(r"(\d+(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)(億|萬|千元)")
+    matches = list(unit_pattern.finditer(normalized))
+    if not matches:
+        return None
+
+    total = 0.0
+    for match in matches:
+        number = _parse_number_token(match.group(1))
+        if number is None:
+            return None
+        unit = match.group(2)
+        if unit == "億":
+            total += number * 100_000_000
+        elif unit == "萬":
+            total += number * 10_000
+        elif unit == "千元":
+            total += number * 1_000
+    return total if total else None
+
+
+def _parse_plain_amount(text: str) -> Optional[float]:
+    money_context = bool(
+        re.search(r"(預算金額|採購金額|決標金額|底價|金額|新[臺台]幣|[臺台]幣|NT\$?|NTD|元)", text, re.IGNORECASE)
+    )
+    tokens = re.findall(r"\d+(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?", text)
+    if not tokens:
+        return None
+    if not money_context and len(tokens) > 1:
+        return None
+
+    values: list[float] = []
+    for token in tokens:
+        number = _parse_number_token(token)
+        if number is not None:
+            values.append(number)
+    if not values:
+        return None
+    if not money_context and values[0] < 10_000:
+        return None
+    return max(values)
+
+
+def _parse_number_token(token: str) -> Optional[float]:
+    try:
+        return float(token.replace(",", ""))
+    except ValueError:
+        return None
 
 
 def parse_bid_date(value: str) -> Optional[date]:

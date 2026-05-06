@@ -19,6 +19,26 @@ def test_parse_amount_with_wan_unit() -> None:
     assert parse_amount("1,250萬") == 12_500_000.0
 
 
+def test_parse_amount_common_currency_formats() -> None:
+    assert parse_amount("19,173,000元") == 19_173_000.0
+    assert parse_amount("NT$ 9,500,000 元") == 9_500_000.0
+    assert parse_amount("新臺幣3萬元整") == 30_000.0
+    assert parse_amount("1億2,500萬") == 125_000_000.0
+
+
+def test_parse_amount_prefers_money_context_in_mixed_deadline_text() -> None:
+    assert parse_amount("預算金額：9,500,000元 截止投標：115/05/05 17:00") == 9_500_000.0
+    assert parse_amount("採購金額 1,250萬元；開標時間 115/05/06") == 12_500_000.0
+
+
+def test_parse_amount_ignores_non_amount_text() -> None:
+    assert parse_amount("預算金額是否公開：否") is None
+    assert parse_amount("押標金手續費：20元") is None
+    assert parse_amount("押標金額度為標價之5%") is None
+    assert parse_amount("詳見連結") is None
+    assert parse_amount("截止投標：115/05/05 17:00") is None
+
+
 def test_parse_bid_date_roc_format() -> None:
     assert parse_bid_date("114/03/24") == date(2025, 3, 24)
 
