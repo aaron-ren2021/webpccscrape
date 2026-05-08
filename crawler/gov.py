@@ -368,7 +368,7 @@ def _extract_detail_fields(soup: Any, record: BidRecord, logger: Any | None = No
             if float(amount_value).is_integer():
                 amount_number = f"{int(amount_value):,}"
             else:
-                amount_number = f"{amount_value:,.2f}".rstrip("0").rstrip(".")
+                amount_number = f"{amount_value:,.2f}"
             formatted = f"NT$ {amount_number} 元"
             record.budget_amount = formatted
             record.amount_raw = formatted
