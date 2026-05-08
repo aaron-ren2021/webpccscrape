@@ -11,7 +11,16 @@ from core.normalize import parse_bid_deadline_text
 from core.stable_keys import notification_keys, primary_notification_key
 
 
-DETAIL_MISSING_VALUES = {"", "none", "null", "無", "無提供", "n/a", "詳見連結"}
+DETAIL_MISSING_VALUES = {
+    "",
+    "none",
+    "null",
+    "無",
+    "無提供",
+    "n/a",
+    "詳見連結",
+    "已公開（金額見詳細頁）",
+}
 
 
 class DetailCacheStore:
