@@ -1,5 +1,5 @@
 from core.config import Settings
-from crawler.taiwanbuying import _parse_records
+from crawler.taiwanbuying import _parse_records, is_taiwanbuying_computer_category
 
 
 def test_taiwanbuying_computer_category_edu_records_are_candidate_only() -> None:
@@ -49,3 +49,21 @@ def test_taiwanbuying_non_edu_computer_category_is_not_hint_candidate() -> None:
     assert len(records) == 1
     assert "candidate_only" not in records[0].metadata
     assert "category_hint" not in records[0].metadata
+
+
+def test_taiwanbuying_computer_category_normalization_handles_spacing_and_width() -> None:
+    assert is_taiwanbuying_computer_category("採購 - 電 腦 類") is True
+    assert is_taiwanbuying_computer_category("採購－電腦類") is True
+    assert is_taiwanbuying_computer_category("採購-資訊服務類") is False
+
+
+def test_taiwanbuying_hint_thresholds_are_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("TAIWANBUYING_HINT_FUZZY_MIN_SCORE", "0.88")
+    monkeypatch.setenv("TAIWANBUYING_HINT_FUZZY_MIN_GAP", "0.05")
+    monkeypatch.setenv("TAIWANBUYING_HINT_DATE_TOLERANCE_DAYS", "2")
+
+    settings = Settings.from_env()
+
+    assert settings.taiwanbuying_hint_fuzzy_min_score == 0.88
+    assert settings.taiwanbuying_hint_fuzzy_min_gap == 0.05
+    assert settings.taiwanbuying_hint_date_tolerance_days == 2

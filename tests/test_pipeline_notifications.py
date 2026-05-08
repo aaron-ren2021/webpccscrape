@@ -634,6 +634,60 @@ def test_taiwanbuying_fuzzy_ambiguous_same_school_same_day_does_not_merge() -> N
     )
 
 
+def test_taiwanbuying_hint_merge_logs_summary() -> None:
+    logger = MagicMock()
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.title = "資訊設備採購案"
+    candidate.organization = "某某大學"
+    candidate.metadata = {"candidate_only": True, "category_hint": "computer_edu"}
+    gov_record = _record(uid="gov", bid_date=date(2026, 4, 29), source="gov_pcc")
+    gov_record.title = "資訊設備採購案"
+    gov_record.organization = "某某大學"
+
+    merge_taiwanbuying_hints_into_gov_records([gov_record], [candidate], logger)
+
+    logger.info.assert_any_call(
+        "taiwanbuying_hint_merge_summary",
+        extra={
+            "candidate_count": 1,
+            "eligible_hint_count": 1,
+            "matched_count": 1,
+            "unmatched_count": 0,
+            "fuzzy_min_score": 0.92,
+            "fuzzy_min_gap": 0.03,
+            "date_tolerance_days": 1,
+        },
+    )
+
+
+def test_taiwanbuying_hint_fuzzy_threshold_can_be_tuned() -> None:
+    logger = MagicMock()
+    candidate = _record(uid="tw", bid_date=date(2026, 4, 29), source="taiwanbuying")
+    candidate.title = "資訊設備採購案"
+    candidate.organization = "某某大學"
+    candidate.metadata = {"candidate_only": True, "category_hint": "computer_edu"}
+    gov_record = _record(uid="gov", bid_date=date(2026, 4, 29), source="gov_pcc")
+    gov_record.title = "資訊設備採購案-第一期"
+    gov_record.organization = "某某大學"
+
+    merge_taiwanbuying_hints_into_gov_records(
+        [gov_record],
+        [candidate],
+        logger,
+        fuzzy_min_score=0.99,
+    )
+    assert "taiwanbuying_hint_matched" not in gov_record.metadata
+
+    merge_taiwanbuying_hints_into_gov_records(
+        [gov_record],
+        [candidate],
+        logger,
+        fuzzy_min_score=0.80,
+    )
+    assert gov_record.metadata["taiwanbuying_hint_matched"] is True
+    assert gov_record.metadata["taiwanbuying_match_method"] == "org_title_fuzzy_date"
+
+
 def test_candidate_only_record_blocked_before_formatter_and_send(monkeypatch) -> None:
     logger = MagicMock()
     settings = Settings(g0v_enabled=False, dry_run=True, detail_cache_enabled=False)

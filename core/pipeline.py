@@ -78,6 +78,9 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         gov_records=gov_records,
         taiwanbuying_candidates=taiwanbuying_candidates,
         logger=logger,
+        fuzzy_min_score=settings.taiwanbuying_hint_fuzzy_min_score,
+        fuzzy_min_gap=settings.taiwanbuying_hint_fuzzy_min_gap,
+        date_tolerance_days=settings.taiwanbuying_hint_date_tolerance_days,
     )
     formal_records = gov_records + g0v_records
 
@@ -296,7 +299,12 @@ def merge_taiwanbuying_hints_into_gov_records(
     gov_records: list[BidRecord],
     taiwanbuying_candidates: list[BidRecord],
     logger: Any,
+    fuzzy_min_score: float = 0.92,
+    fuzzy_min_gap: float = 0.03,
+    date_tolerance_days: int = 1,
 ) -> list[BidRecord]:
+    eligible_count = 0
+    matched_count = 0
     for candidate in taiwanbuying_candidates:
         metadata = candidate.metadata or {}
         if metadata.get("category_hint") != "computer_edu":
@@ -304,10 +312,19 @@ def merge_taiwanbuying_hints_into_gov_records(
         if metadata.get("candidate_only") is not True:
             continue
 
-        match = _match_taiwanbuying_candidate_to_gov(candidate, gov_records, logger)
+        eligible_count += 1
+        match = _match_taiwanbuying_candidate_to_gov(
+            candidate,
+            gov_records,
+            logger,
+            fuzzy_min_score=fuzzy_min_score,
+            fuzzy_min_gap=fuzzy_min_gap,
+            date_tolerance_days=date_tolerance_days,
+        )
         if not match:
             continue
 
+        matched_count += 1
         gov_record, method = match
         gov_record.metadata.update(
             {
@@ -321,6 +338,18 @@ def merge_taiwanbuying_hints_into_gov_records(
                 else "",
             }
         )
+    logger.info(
+        "taiwanbuying_hint_merge_summary",
+        extra={
+            "candidate_count": len(taiwanbuying_candidates),
+            "eligible_hint_count": eligible_count,
+            "matched_count": matched_count,
+            "unmatched_count": eligible_count - matched_count,
+            "fuzzy_min_score": fuzzy_min_score,
+            "fuzzy_min_gap": fuzzy_min_gap,
+            "date_tolerance_days": date_tolerance_days,
+        },
+    )
     return gov_records
 
 
@@ -328,6 +357,9 @@ def _match_taiwanbuying_candidate_to_gov(
     candidate: BidRecord,
     gov_records: list[BidRecord],
     logger: Any,
+    fuzzy_min_score: float = 0.92,
+    fuzzy_min_gap: float = 0.03,
+    date_tolerance_days: int = 1,
 ) -> tuple[BidRecord, str] | None:
     candidate_ids = _tender_identity_values(candidate)
     if candidate_ids:
@@ -353,7 +385,7 @@ def _match_taiwanbuying_candidate_to_gov(
         for record in gov_records
         if normalize_org(record.organization) == normalized_org
         and normalize_text(record.title) == normalized_title
-        and _date_within_one_day(candidate_date, record.bid_date or record.announcement_date)
+        and _date_within_days(candidate_date, record.bid_date or record.announcement_date, date_tolerance_days)
     ]
     if len(exact_title_matches) == 1:
         return exact_title_matches[0], "org_title_date"
@@ -365,17 +397,17 @@ def _match_taiwanbuying_candidate_to_gov(
     for record in gov_records:
         if normalize_org(record.organization) != normalized_org:
             continue
-        if not _date_within_one_day(candidate_date, record.bid_date or record.announcement_date):
+        if not _date_within_days(candidate_date, record.bid_date or record.announcement_date, date_tolerance_days):
             continue
         score = SequenceMatcher(None, normalized_title, normalize_text(record.title)).ratio()
-        if score >= 0.92:
+        if score >= fuzzy_min_score:
             scored_matches.append((score, record))
 
     if not scored_matches:
         return None
 
     scored_matches.sort(key=lambda item: item[0], reverse=True)
-    if len(scored_matches) > 1 and scored_matches[0][0] - scored_matches[1][0] < 0.03:
+    if len(scored_matches) > 1 and scored_matches[0][0] - scored_matches[1][0] < fuzzy_min_gap:
         _log_ambiguous_taiwanbuying_hint(candidate, logger, "fuzzy_score_gap_too_small")
         return None
     return scored_matches[0][1], "org_title_fuzzy_date"
@@ -416,9 +448,13 @@ def _query_value(url: str, key: str) -> str:
 
 
 def _date_within_one_day(left: date, right: date | None) -> bool:
+    return _date_within_days(left, right, 1)
+
+
+def _date_within_days(left: date, right: date | None, tolerance_days: int) -> bool:
     if right is None:
         return False
-    return abs((left - right).days) <= 1
+    return abs((left - right).days) <= max(tolerance_days, 0)
 
 
 def _log_ambiguous_taiwanbuying_hint(candidate: BidRecord, logger: Any, reason: str) -> None:
