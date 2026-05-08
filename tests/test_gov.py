@@ -81,6 +81,21 @@ def test_extract_detail_fields_with_bond_amount():
     assert record.bid_opening_time == "115/05/05 14:00"
 
 
+def test_extract_detail_fields_budget_decimal_keeps_precision():
+    html = """
+    <html><body><table>
+      <tr><td>預算金額</td><td>1,234,567.89元</td></tr>
+    </table></body></html>
+    """
+    record = _make_record()
+    soup = parse_html(html)
+    _extract_detail_fields(soup, record)
+
+    assert record.budget_amount == "NT$ 1,234,567.89 元"
+    assert record.amount_raw == "NT$ 1,234,567.89 元"
+    assert record.amount_value == 1_234_567.89
+
+
 def test_extract_detail_fields_budget_not_public():
     html = '<html><body><table><tr><td>預算金額是否公開</td><td>否</td></tr></table></body></html>'
     record = _make_record()
@@ -106,6 +121,17 @@ def test_extract_detail_fields_budget_not_public_does_not_overwrite_amount():
     assert record.budget_amount == "NT$ 9,500,000 元"
     assert record.amount_raw == "NT$ 9,500,000 元"
     assert record.amount_value == 9_500_000.0
+
+
+def test_extract_detail_fields_budget_public_yes_preserves_existing_list_amount():
+    html = '<html><body><table><tr><td>預算金額是否公開</td><td>是</td></tr></table></body></html>'
+    record = _make_record(amount_raw="NT$ 1,200,000 元", amount_value=1_200_000.0)
+    soup = parse_html(html)
+    _extract_detail_fields(soup, record)
+
+    assert record.budget_amount == ""
+    assert record.amount_raw == "NT$ 1,200,000 元"
+    assert record.amount_value == 1_200_000.0
 
 
 def test_is_captcha_page_detects_captcha():
@@ -244,6 +270,14 @@ def test_extract_detail_fields_preserves_list_amount_when_budget_unparseable():
             "snippet": "詳見招標文件",
         },
     )
+    budget_miss_reasons = [
+        call.kwargs["extra"]["reason"]
+        for call in logger.warning.call_args_list
+        if call.args
+        and call.args[0] == "gov_detail_field_missing"
+        and call.kwargs.get("extra", {}).get("field") == "預算金額"
+    ]
+    assert budget_miss_reasons == ["parse_amount_failed"]
 
 
 def test_extract_detail_fields_production_wrong_page_preserves_list_values():

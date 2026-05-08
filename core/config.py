@@ -83,8 +83,8 @@ class Settings:
 
     recent_days: int = 1
     state_retention_days: int = 90
-    # Controls persistent detail cache reads/writes. Records still missing amount
-    # or deadline fields may be fetched inline before notification.
+    # Controls persistent detail cache reads/writes. Records still missing amount,
+    # budget/deadline, bid bond, or opening-time fields may be fetched inline before notification.
     detail_cache_enabled: bool = True
     detail_cache_path: str = "state/detail_cache.json"
     detail_backfill_queue_path: str = "state/detail_backfill_queue.json"

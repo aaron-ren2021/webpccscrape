@@ -359,23 +359,34 @@ def _is_captcha_page(html: str) -> bool:
 def _extract_detail_fields(soup: Any, record: BidRecord, logger: Any | None = None) -> None:
     """Extract stable detail fields from gov.pcc detail HTML without erasing list data."""
     values = _extract_labeled_values(soup)
+    logged_missing_fields: set[str] = set()
 
     budget = _pick_labeled_value(values, ["預算金額"], exclude_labels=["預算金額是否公開"])
     if budget:
         amount_value = parse_amount(budget)
         if amount_value is not None:
-            formatted = f"NT$ {int(amount_value):,} 元"
+            if float(amount_value).is_integer():
+                amount_number = f"{int(amount_value):,}"
+            else:
+                amount_number = f"{amount_value:,.2f}".rstrip("0").rstrip(".")
+            formatted = f"NT$ {amount_number} 元"
             record.budget_amount = formatted
             record.amount_raw = formatted
             record.amount_value = amount_value
         else:
             _log_detail_extract_miss(logger, record, "預算金額", "parse_amount_failed", budget)
+            logged_missing_fields.add("預算金額")
 
     budget_public = _pick_labeled_value(values, ["預算金額是否公開"])
     if budget_public:
         if budget_public.startswith("否") and record.amount_value is None and not record.budget_amount:
             record.budget_amount = "未公開"
-        elif budget_public.startswith("是") and not record.budget_amount:
+        elif (
+            budget_public.startswith("是")
+            and not record.budget_amount
+            and record.amount_value is None
+            and not str(record.amount_raw or "").strip()
+        ):
             record.budget_amount = "已公開（金額見詳細頁）"
 
     bond = _pick_labeled_value(
@@ -417,6 +428,8 @@ def _extract_detail_fields(soup: Any, record: BidRecord, logger: Any | None = No
             ("截止投標", record.bid_deadline),
             ("開標時間", record.bid_opening_time),
         ]:
+            if field in logged_missing_fields:
+                continue
             if not str(current or "").strip():
                 _log_detail_extract_miss(logger, record, field, "label_not_found_or_empty", _html_snippet(soup))
 
