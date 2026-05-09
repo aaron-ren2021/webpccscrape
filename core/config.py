@@ -83,6 +83,8 @@ class Settings:
 
     recent_days: int = 1
     state_retention_days: int = 90
+    # Controls persistent detail cache reads/writes. Records still missing amount,
+    # budget/deadline, bid bond, or opening-time fields may be fetched inline before notification.
     detail_cache_enabled: bool = True
     detail_cache_path: str = "state/detail_cache.json"
     detail_backfill_queue_path: str = "state/detail_backfill_queue.json"
@@ -105,6 +107,9 @@ class Settings:
     taiwanbuying_summary_selectors: list[str] = field(default_factory=lambda: [".summary", ".desc", "td:nth-child(4)"])
     taiwanbuying_category_selectors: list[str] = field(default_factory=lambda: [".category", ".type", "td:nth-child(6)"])
     taiwanbuying_link_selectors: list[str] = field(default_factory=lambda: ["a"])
+    taiwanbuying_hint_fuzzy_min_score: float = 0.92
+    taiwanbuying_hint_fuzzy_min_gap: float = 0.03
+    taiwanbuying_hint_date_tolerance_days: int = 1
 
     gov_url: str = "https://web.pcc.gov.tw/pis/"
     gov_method: str = "GET"
@@ -228,6 +233,15 @@ class Settings:
             taiwanbuying_category_selectors=_parse_csv(os.getenv("TAIWANBUYING_CATEGORY_SELECTORS"))
             or [".category", ".type", "td:nth-child(6)"],
             taiwanbuying_link_selectors=_parse_csv(os.getenv("TAIWANBUYING_LINK_SELECTORS")) or ["a"],
+            taiwanbuying_hint_fuzzy_min_score=_parse_float(
+                os.getenv("TAIWANBUYING_HINT_FUZZY_MIN_SCORE"), 0.92
+            ),
+            taiwanbuying_hint_fuzzy_min_gap=_parse_float(
+                os.getenv("TAIWANBUYING_HINT_FUZZY_MIN_GAP"), 0.03
+            ),
+            taiwanbuying_hint_date_tolerance_days=_parse_int(
+                os.getenv("TAIWANBUYING_HINT_DATE_TOLERANCE_DAYS"), 1
+            ),
             gov_url=os.getenv("GOV_URL", "https://web.pcc.gov.tw/pis/"),
             gov_method=os.getenv("GOV_METHOD", "GET").upper(),
             gov_params=_parse_json(os.getenv("GOV_PARAMS_JSON")),

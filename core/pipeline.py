@@ -78,6 +78,9 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
         gov_records=gov_records,
         taiwanbuying_candidates=taiwanbuying_candidates,
         logger=logger,
+        fuzzy_min_score=settings.taiwanbuying_hint_fuzzy_min_score,
+        fuzzy_min_gap=settings.taiwanbuying_hint_fuzzy_min_gap,
+        date_tolerance_days=settings.taiwanbuying_hint_date_tolerance_days,
     )
     formal_records = gov_records + g0v_records
 
@@ -94,22 +97,10 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
             detail_cache_store.apply_to_records(deduped)
         except Exception as exc:
             logger.warning("detail_cache_apply_failed", extra={"error": str(exc)})
-    else:
-        # --- Legacy inline enrichment path, kept behind DETAIL_CACHE_ENABLED=false ---
-        gov_records = [r for r in deduped if r.source == "gov_pcc"]
-        if gov_records:
-            try:
-                enrich_gov_detail(gov_records, settings, logger)
-                logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
-            except Exception as exc:
-                logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
 
-            summary = _build_bid_bond_unparsed_summary(gov_records, settings)
-            logger.info("bid_bond_unparsed_summary", extra=summary)
-
-        g0v_records = [r for r in deduped if r.source == "g0v"]
-        if g0v_records:
-            _enrich_g0v_records_inline(g0v_records, settings, logger)
+    # Read-through fallback: cache hits are used first, then records that still
+    # lack amount/deadline detail are enriched inline before rendering.
+    _enrich_missing_details_inline(deduped, settings, logger)
 
     _log_g0v_link_resolution_summary([r for r in deduped if r.source == "g0v"], logger)
 
@@ -308,7 +299,12 @@ def merge_taiwanbuying_hints_into_gov_records(
     gov_records: list[BidRecord],
     taiwanbuying_candidates: list[BidRecord],
     logger: Any,
+    fuzzy_min_score: float = 0.92,
+    fuzzy_min_gap: float = 0.03,
+    date_tolerance_days: int = 1,
 ) -> list[BidRecord]:
+    eligible_count = 0
+    matched_count = 0
     for candidate in taiwanbuying_candidates:
         metadata = candidate.metadata or {}
         if metadata.get("category_hint") != "computer_edu":
@@ -316,10 +312,19 @@ def merge_taiwanbuying_hints_into_gov_records(
         if metadata.get("candidate_only") is not True:
             continue
 
-        match = _match_taiwanbuying_candidate_to_gov(candidate, gov_records, logger)
+        eligible_count += 1
+        match = _match_taiwanbuying_candidate_to_gov(
+            candidate,
+            gov_records,
+            logger,
+            fuzzy_min_score=fuzzy_min_score,
+            fuzzy_min_gap=fuzzy_min_gap,
+            date_tolerance_days=date_tolerance_days,
+        )
         if not match:
             continue
 
+        matched_count += 1
         gov_record, method = match
         gov_record.metadata.update(
             {
@@ -333,6 +338,18 @@ def merge_taiwanbuying_hints_into_gov_records(
                 else "",
             }
         )
+    logger.info(
+        "taiwanbuying_hint_merge_summary",
+        extra={
+            "candidate_count": len(taiwanbuying_candidates),
+            "eligible_hint_count": eligible_count,
+            "matched_count": matched_count,
+            "unmatched_count": eligible_count - matched_count,
+            "fuzzy_min_score": fuzzy_min_score,
+            "fuzzy_min_gap": fuzzy_min_gap,
+            "date_tolerance_days": date_tolerance_days,
+        },
+    )
     return gov_records
 
 
@@ -340,6 +357,9 @@ def _match_taiwanbuying_candidate_to_gov(
     candidate: BidRecord,
     gov_records: list[BidRecord],
     logger: Any,
+    fuzzy_min_score: float = 0.92,
+    fuzzy_min_gap: float = 0.03,
+    date_tolerance_days: int = 1,
 ) -> tuple[BidRecord, str] | None:
     candidate_ids = _tender_identity_values(candidate)
     if candidate_ids:
@@ -365,7 +385,7 @@ def _match_taiwanbuying_candidate_to_gov(
         for record in gov_records
         if normalize_org(record.organization) == normalized_org
         and normalize_text(record.title) == normalized_title
-        and _date_within_one_day(candidate_date, record.bid_date or record.announcement_date)
+        and _date_within_days(candidate_date, record.bid_date or record.announcement_date, date_tolerance_days)
     ]
     if len(exact_title_matches) == 1:
         return exact_title_matches[0], "org_title_date"
@@ -377,17 +397,17 @@ def _match_taiwanbuying_candidate_to_gov(
     for record in gov_records:
         if normalize_org(record.organization) != normalized_org:
             continue
-        if not _date_within_one_day(candidate_date, record.bid_date or record.announcement_date):
+        if not _date_within_days(candidate_date, record.bid_date or record.announcement_date, date_tolerance_days):
             continue
         score = SequenceMatcher(None, normalized_title, normalize_text(record.title)).ratio()
-        if score >= 0.92:
+        if score >= fuzzy_min_score:
             scored_matches.append((score, record))
 
     if not scored_matches:
         return None
 
     scored_matches.sort(key=lambda item: item[0], reverse=True)
-    if len(scored_matches) > 1 and scored_matches[0][0] - scored_matches[1][0] < 0.03:
+    if len(scored_matches) > 1 and scored_matches[0][0] - scored_matches[1][0] < fuzzy_min_gap:
         _log_ambiguous_taiwanbuying_hint(candidate, logger, "fuzzy_score_gap_too_small")
         return None
     return scored_matches[0][1], "org_title_fuzzy_date"
@@ -428,9 +448,13 @@ def _query_value(url: str, key: str) -> str:
 
 
 def _date_within_one_day(left: date, right: date | None) -> bool:
+    return _date_within_days(left, right, 1)
+
+
+def _date_within_days(left: date, right: date | None, tolerance_days: int) -> bool:
     if right is None:
         return False
-    return abs((left - right).days) <= 1
+    return abs((left - right).days) <= max(tolerance_days, 0)
 
 
 def _log_ambiguous_taiwanbuying_hint(candidate: BidRecord, logger: Any, reason: str) -> None:
@@ -588,6 +612,49 @@ def _enrich_g0v_records_inline(records: list[BidRecord], settings: Settings, log
             enrich_g0v_record(record, settings, logger, session=session)
     except Exception as exc:
         logger.warning("g0v_link_resolution_failed", extra={"error": str(exc)})
+
+
+def _enrich_missing_details_inline(records: list[BidRecord], settings: Settings, logger: Any) -> None:
+    gov_records = [
+        record
+        for record in records
+        if record.source == "gov_pcc" and _needs_detail_or_amount(record)
+    ]
+    if gov_records:
+        try:
+            enrich_gov_detail(gov_records, settings, logger)
+            logger.info("gov_detail_enriched", extra={"count": len(gov_records)})
+        except Exception as exc:
+            logger.warning("gov_detail_enrich_failed", extra={"error": str(exc)})
+
+        summary = _build_bid_bond_unparsed_summary(gov_records, settings)
+        logger.info("bid_bond_unparsed_summary", extra=summary)
+
+    g0v_records = [
+        record
+        for record in records
+        if record.source == "g0v" and _needs_detail_or_amount(record)
+    ]
+    if g0v_records:
+        _enrich_g0v_records_inline(g0v_records, settings, logger)
+
+
+def _needs_detail_or_amount(record: BidRecord) -> bool:
+    return (
+        _missing_amount(record)
+        or _is_detail_missing(record.budget_amount)
+        or _is_detail_missing(record.bid_bond)
+        or _is_detail_missing(record.bid_deadline)
+        or _is_detail_missing(record.bid_opening_time)
+    )
+
+
+def _missing_amount(record: BidRecord) -> bool:
+    return record.amount_value is None and str(record.budget_amount or "").strip() != "未公開"
+
+
+def _is_detail_missing(value: str) -> bool:
+    return str(value or "").strip().lower() in {"", "none", "null", "無", "無提供", "n/a", "詳見連結"}
 
 
 def _log_g0v_link_resolution_summary(records: list[BidRecord], logger: Any) -> None:

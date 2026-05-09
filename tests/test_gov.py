@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from crawler.gov import _extract_detail_fields, _is_captcha_page, _parse_bid_bond_value
+from crawler.g0v import _extract_detail_fields as _extract_g0v_detail_fields
 from crawler.gov import enrich_detail, fetch_bids
 from crawler.common import parse_html
 from core.config import Settings
@@ -60,6 +61,8 @@ def test_extract_detail_fields_basic():
     _extract_detail_fields(soup, record)
 
     assert record.budget_amount == "NT$ 222,380 元"
+    assert record.amount_raw == "NT$ 222,380 元"
+    assert record.amount_value == 222_380.0
     assert record.bid_bond == "免繳"
     assert record.bid_deadline == "115/04/08 17:00"
     assert record.bid_opening_time == "115/04/09 14:00"
@@ -71,9 +74,26 @@ def test_extract_detail_fields_with_bond_amount():
     _extract_detail_fields(soup, record)
 
     assert record.budget_amount == "NT$ 19,173,000 元"
+    assert record.amount_raw == "NT$ 19,173,000 元"
+    assert record.amount_value == 19_173_000.0
     assert record.bid_bond == "NT$ 576,000 元"
     assert record.bid_deadline == "115/05/05 10:00"
     assert record.bid_opening_time == "115/05/05 14:00"
+
+
+def test_extract_detail_fields_budget_decimal_keeps_precision():
+    html = """
+    <html><body><table>
+      <tr><td>預算金額</td><td>1,234,567.89元</td></tr>
+    </table></body></html>
+    """
+    record = _make_record()
+    soup = parse_html(html)
+    _extract_detail_fields(soup, record)
+
+    assert record.budget_amount == "NT$ 1,234,567.89 元"
+    assert record.amount_raw == "NT$ 1,234,567.89 元"
+    assert record.amount_value == 1_234_567.89
 
 
 def test_extract_detail_fields_budget_not_public():
@@ -83,6 +103,35 @@ def test_extract_detail_fields_budget_not_public():
     _extract_detail_fields(soup, record)
 
     assert record.budget_amount == "未公開"
+    assert record.amount_raw == ""
+    assert record.amount_value is None
+
+
+def test_extract_detail_fields_budget_not_public_does_not_overwrite_amount():
+    html = """
+    <html><body><table>
+      <tr><td>預算金額</td><td>9,500,000元</td></tr>
+      <tr><td>預算金額是否公開</td><td>否</td></tr>
+    </table></body></html>
+    """
+    record = _make_record()
+    soup = parse_html(html)
+    _extract_detail_fields(soup, record)
+
+    assert record.budget_amount == "NT$ 9,500,000 元"
+    assert record.amount_raw == "NT$ 9,500,000 元"
+    assert record.amount_value == 9_500_000.0
+
+
+def test_extract_detail_fields_budget_public_yes_preserves_existing_list_amount():
+    html = '<html><body><table><tr><td>預算金額是否公開</td><td>是</td></tr></table></body></html>'
+    record = _make_record(amount_raw="NT$ 1,200,000 元", amount_value=1_200_000.0)
+    soup = parse_html(html)
+    _extract_detail_fields(soup, record)
+
+    assert record.budget_amount == ""
+    assert record.amount_raw == "NT$ 1,200,000 元"
+    assert record.amount_value == 1_200_000.0
 
 
 def test_is_captcha_page_detects_captcha():
@@ -193,3 +242,91 @@ def test_extract_detail_fields_bond_variations():
 
 def test_parse_bid_bond_value_with_wan_unit():
     assert _parse_bid_bond_value("押標金額度：新臺幣3萬元整") == "NT$ 30,000 元"
+
+
+def test_extract_detail_fields_preserves_list_amount_when_budget_unparseable():
+    html = """
+    <html><body><table>
+      <tr><th>預算金額</th><td>詳見招標文件</td></tr>
+      <tr><th>截止投標</th><td>115/05/11 17:00</td></tr>
+    </table></body></html>
+    """
+    logger = MagicMock()
+    record = _make_record(amount_raw="NT$ 1,200,000 元", amount_value=1_200_000.0)
+
+    _extract_detail_fields(parse_html(html), record, logger)
+
+    assert record.amount_raw == "NT$ 1,200,000 元"
+    assert record.amount_value == 1_200_000.0
+    assert record.budget_amount == ""
+    assert record.bid_deadline == "115/05/11 17:00"
+    logger.warning.assert_any_call(
+        "gov_detail_field_missing",
+        extra={
+            "field": "預算金額",
+            "reason": "parse_amount_failed",
+            "title": "test",
+            "url": "https://example.com",
+            "snippet": "詳見招標文件",
+        },
+    )
+    budget_miss_reasons = [
+        call.kwargs["extra"]["reason"]
+        for call in logger.warning.call_args_list
+        if call.args
+        and call.args[0] == "gov_detail_field_missing"
+        and call.kwargs.get("extra", {}).get("field") == "預算金額"
+    ]
+    assert budget_miss_reasons == ["parse_amount_failed"]
+
+
+def test_extract_detail_fields_production_wrong_page_preserves_list_values():
+    with open("tests/data/production_gov_search_wrong_page_20260424.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+    logger = MagicMock()
+    record = _make_record(
+        organization="國立臺灣藝術大學",
+        bid_deadline="115/05/14",
+        amount_raw="NT$ 3,600,000 元",
+        amount_value=3_600_000.0,
+    )
+
+    _extract_detail_fields(parse_html(html_content), record, logger)
+
+    assert record.organization == "國立臺灣藝術大學"
+    assert record.bid_deadline == "115/05/14"
+    assert record.amount_raw == "NT$ 3,600,000 元"
+    assert record.amount_value == 3_600_000.0
+    assert record.budget_amount == ""
+    logged_fields = [
+        call.kwargs["extra"]["field"]
+        for call in logger.warning.call_args_list
+        if call.args and call.args[0] == "gov_detail_field_missing"
+    ]
+    assert "預算金額" in logged_fields
+    assert "押標金" in logged_fields
+    assert "開標時間" in logged_fields
+
+
+def test_g0v_detail_preserves_amount_value_when_budget_parse_fails():
+    logger = MagicMock()
+    record = _make_record(
+        source="g0v",
+        amount_raw="NT$ 2,500,000 元",
+        amount_value=2_500_000.0,
+    )
+
+    _extract_g0v_detail_fields({"採購資料:預算金額": "詳見連結"}, record, logger)
+
+    assert record.budget_amount == "詳見連結"
+    assert record.amount_raw == "NT$ 2,500,000 元"
+    assert record.amount_value == 2_500_000.0
+    logger.warning.assert_any_call(
+        "g0v_detail_budget_parse_failed",
+        extra={
+            "title": "test",
+            "url": "https://example.com",
+            "budget": "詳見連結",
+            "existing_amount_value": 2_500_000.0,
+        },
+    )

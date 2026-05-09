@@ -11,7 +11,16 @@ from core.normalize import parse_bid_deadline_text
 from core.stable_keys import notification_keys, primary_notification_key
 
 
-DETAIL_MISSING_VALUES = {"", "none", "null", "無", "無提供", "n/a"}
+DETAIL_MISSING_VALUES = {
+    "",
+    "none",
+    "null",
+    "無",
+    "無提供",
+    "n/a",
+    "詳見連結",
+    "已公開（金額見詳細頁）",
+}
 
 
 class DetailCacheStore:
@@ -319,7 +328,8 @@ def _should_backfill(record: BidRecord) -> bool:
     ):
         return False
     return (
-        _is_missing(record.budget_amount)
+        _amount_missing(record)
+        or _is_missing(record.budget_amount)
         or _is_missing(record.bid_bond)
         or _is_missing(record.bid_opening_time)
         or _is_missing(record.bid_deadline)
@@ -330,7 +340,8 @@ def _entry_is_success(entry: dict[str, Any]) -> bool:
     if str(entry.get("status") or "") != "success":
         return False
     return (
-        not _is_missing(str(entry.get("budget_amount") or ""))
+        entry.get("amount_value") is not None
+        or not _is_missing(str(entry.get("budget_amount") or ""))
         or not _is_missing(str(entry.get("bid_bond") or ""))
         or not _is_missing(str(entry.get("bid_opening_time") or ""))
         or not _is_missing(str(entry.get("bid_deadline") or ""))
@@ -354,6 +365,10 @@ def _cache_entry_expired(entry: dict[str, Any], now: datetime) -> bool:
 
 def _is_missing(value: str) -> bool:
     return str(value or "").strip().lower() in DETAIL_MISSING_VALUES
+
+
+def _amount_missing(record: BidRecord) -> bool:
+    return record.amount_value is None and str(record.budget_amount or "").strip() != "未公開"
 
 
 def _append_source(current: str, source: str) -> str:

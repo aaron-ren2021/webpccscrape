@@ -66,6 +66,37 @@ def test_detail_cache_miss_queues_by_dict_key_and_deduplicates(tmp_path) -> None
     assert next(iter(data["entries"].values()))["title"] == "測試詳情案"
 
 
+def test_detail_cache_queues_when_amount_is_still_missing(tmp_path) -> None:
+    store = DetailCacheStore(
+        cache_path=tmp_path / "detail_cache.json",
+        queue_path=tmp_path / "detail_queue.json",
+        logger=MagicMock(),
+    )
+    record = _record()
+    record.budget_amount = "已公開（金額見詳細頁）"
+    record.bid_bond = "免繳"
+    record.bid_deadline = "115/05/10 17:00"
+    record.bid_opening_time = "115/05/11 10:00"
+
+    assert store.enqueue_missing([record]) == 1
+
+
+def test_detail_cache_queues_placeholder_detail_values(tmp_path) -> None:
+    store = DetailCacheStore(
+        cache_path=tmp_path / "detail_cache.json",
+        queue_path=tmp_path / "detail_queue.json",
+        logger=MagicMock(),
+    )
+    record = _record()
+    record.amount_value = 1_000_000
+    record.budget_amount = "NT$ 1,000,000 元"
+    record.bid_bond = "免繳"
+    record.bid_deadline = "詳見連結"
+    record.bid_opening_time = "115/05/11 10:00"
+
+    assert store.enqueue_missing([record]) == 1
+
+
 def test_detail_cache_failure_counts_are_per_source(tmp_path) -> None:
     store = DetailCacheStore(
         cache_path=tmp_path / "detail_cache.json",

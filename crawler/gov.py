@@ -256,7 +256,7 @@ def enrich_detail_stealth(records: list[BidRecord], settings: Settings, logger: 
         
         try:
             soup = parse_html(html)
-            _extract_detail_fields(soup, record)
+            _extract_detail_fields(soup, record, logger)
         except Exception as exc:
             logger.warning("gov_detail_parse_failed", extra={"url": url, "error": str(exc)})
     
@@ -339,7 +339,7 @@ def enrich_detail_requests(records: list[BidRecord], settings: Settings, logger:
                     continue
 
             soup = parse_html(html)
-            _extract_detail_fields(soup, record)
+            _extract_detail_fields(soup, record, logger)
             consecutive_captcha = 0  # Reset on success
         except Exception as exc:
             logger.warning("gov_detail_fetch_failed", extra={"url": record.url, "error": str(exc)})
@@ -356,60 +356,174 @@ def _is_captcha_page(html: str) -> bool:
     return "驗證碼檢核" in html
 
 
-def _extract_detail_fields(soup: Any, record: BidRecord) -> None:
-    """Extract 預算金額, 押標金, 截止投標, 開標時間 from a gov.pcc detail page."""
-    for td in soup.find_all(["td", "th"]):
-        text = td.get_text(strip=True)
+def _extract_detail_fields(soup: Any, record: BidRecord, logger: Any | None = None) -> None:
+    """Extract stable detail fields from gov.pcc detail HTML without erasing list data."""
+    values = _extract_labeled_values(soup)
+    logged_missing_fields: set[str] = set()
 
-        # --- 預算金額（精確匹配，排除「是否公開」） ---
-        if text == "預算金額":
-            nxt = td.find_next_sibling("td")
-            if nxt:
-                val = nxt.get_text(strip=True)
-                amount_match = re.search(r"[\d,]+", val)
-                if amount_match:
-                    record.budget_amount = f"NT$ {amount_match.group()} 元"
-
-        elif text == "預算金額是否公開":
-            nxt = td.find_next_sibling("td")
-            if nxt:
-                val = nxt.get_text(strip=True)
-                if val.startswith("否"):
-                    record.budget_amount = "未公開"
-                elif not record.budget_amount:
-                    # 公開但沒有獨立的預算金額列
-                    record.budget_amount = "已公開（金額見詳細頁）"
-
-        # --- 押標金（寬鬆匹配，並排除其他保證金類型） ---
-        elif "押標金" in text and "履約" not in text and "保固" not in text:
-            nxt = td.find_next_sibling("td")
-            is_label_cell = text == "是否須繳納押標金"
-            if is_label_cell and nxt:
-                val = nxt.get_text(" ", strip=True).replace("\u3000", " ")
+    budget = _pick_labeled_value(values, ["預算金額"], exclude_labels=["預算金額是否公開"])
+    if budget:
+        amount_value = parse_amount(budget)
+        if amount_value is not None:
+            if float(amount_value).is_integer():
+                amount_number = f"{int(amount_value):,}"
             else:
-                val = text.replace("\u3000", " ")
-            if val:
-                record.metadata["bid_bond_raw"] = val[:100]
+                amount_number = f"{amount_value:,.2f}"
+            formatted = f"NT$ {amount_number} 元"
+            record.budget_amount = formatted
+            record.amount_raw = formatted
+            record.amount_value = amount_value
+        else:
+            _log_detail_extract_miss(logger, record, "預算金額", "parse_amount_failed", budget)
+            logged_missing_fields.add("預算金額")
 
-                parsed_bond = _parse_bid_bond_value(val)
-                if not record.bid_bond or record.bid_bond in ("需繳納", "未公開"):
-                    record.bid_bond = parsed_bond
+    budget_public = _pick_labeled_value(values, ["預算金額是否公開"])
+    if budget_public:
+        if budget_public.startswith("否") and record.amount_value is None and not record.budget_amount:
+            record.budget_amount = "未公開"
+        elif (
+            budget_public.startswith("是")
+            and not record.budget_amount
+            and record.amount_value is None
+            and not str(record.amount_raw or "").strip()
+        ):
+            record.budget_amount = "已公開（金額見詳細頁）"
 
-        # --- 截止投標 ---
-        elif text == "截止投標":
-            nxt = td.find_next_sibling("td")
-            if nxt:
-                val = nxt.get_text(strip=True)
-                # 格式通常是 "115/04/07 17:00"
-                record.bid_deadline = val
+    bond = _pick_labeled_value(
+        values,
+        ["是否須繳納押標金", "押標金額度", "押標金"],
+        exclude_labels=["履約", "保固", "手續費"],
+    )
+    if bond:
+        record.metadata["bid_bond_raw"] = bond[:100]
+        parsed_bond = _parse_bid_bond_value(bond)
+        if not record.bid_bond or record.bid_bond in ("需繳納", "未公開", "無提供"):
+            record.bid_bond = parsed_bond
 
-        # --- 開標時間 ---
-        elif text == "開標時間":
-            nxt = td.find_next_sibling("td")
-            if nxt:
-                val = nxt.get_text(strip=True)
-                # 格式通常是 "115/04/08 10:00"
-                record.bid_opening_time = val
+    deadline = _pick_labeled_value(values, ["截止投標"])
+    if deadline:
+        record.bid_deadline = deadline
+
+    opening = _pick_labeled_value(values, ["開標時間"])
+    if opening:
+        record.bid_opening_time = opening
+
+    organization = _pick_labeled_value(values, ["機關名稱", "招標機關", "洽辦機關"])
+    if organization and not record.organization:
+        record.organization = organization
+
+    contact = _pick_labeled_value(values, ["聯絡人", "聯絡資訊", "承辦人"])
+    phone = _pick_labeled_value(values, ["聯絡電話", "電話"])
+    if contact:
+        record.metadata["contact_info"] = f"{contact} {phone}".strip()
+
+    award_method = _pick_labeled_value(values, ["決標方式"])
+    if award_method:
+        record.metadata["award_method"] = award_method
+
+    if logger:
+        for field, current in [
+            ("預算金額", record.budget_amount),
+            ("押標金", record.bid_bond),
+            ("截止投標", record.bid_deadline),
+            ("開標時間", record.bid_opening_time),
+        ]:
+            if field in logged_missing_fields:
+                continue
+            if not str(current or "").strip():
+                _log_detail_extract_miss(logger, record, field, "label_not_found_or_empty", _html_snippet(soup))
+
+
+def _extract_labeled_values(soup: Any) -> dict[str, list[str]]:
+    values: dict[str, list[str]] = {}
+
+    for row in soup.find_all("tr"):
+        cells = row.find_all(["th", "td"], recursive=False)
+        if len(cells) < 2:
+            continue
+        for idx, cell in enumerate(cells[:-1]):
+            label = _clean_detail_text(cell.get_text(" ", strip=True))
+            value = _clean_detail_text(cells[idx + 1].get_text(" ", strip=True))
+            if label and value:
+                _add_labeled_value(values, label, value)
+
+    for node in soup.find_all(["td", "th", "label", "legend"]):
+        text = _clean_detail_text(node.get_text(" ", strip=True))
+        if not text:
+            continue
+        match = re.match(r"^([^：:]{2,24})[：:]\s*(.+)$", text)
+        if match:
+            _add_labeled_value(values, match.group(1), match.group(2))
+
+    return values
+
+
+def _pick_labeled_value(
+    values: dict[str, list[str]],
+    labels: list[str],
+    *,
+    exclude_labels: list[str] | None = None,
+) -> str:
+    excludes = exclude_labels or []
+    for raw_label, candidates in values.items():
+        label = _normalize_detail_label(raw_label)
+        if any(_normalize_detail_label(exclude) in label for exclude in excludes):
+            continue
+        if not any(_normalize_detail_label(expected) in label for expected in labels):
+            continue
+        for value in candidates:
+            cleaned = _strip_repeated_label(value, labels)
+            if cleaned:
+                return cleaned
+    return ""
+
+
+def _add_labeled_value(values: dict[str, list[str]], label: str, value: str) -> None:
+    clean_label = _clean_detail_text(label)
+    clean_value = _clean_detail_text(value)
+    if clean_label and clean_value and clean_label != clean_value:
+        values.setdefault(clean_label, []).append(clean_value)
+
+
+def _strip_repeated_label(value: str, labels: list[str]) -> str:
+    cleaned = _clean_detail_text(value)
+    for label in labels:
+        cleaned = re.sub(rf"^{re.escape(label)}[：:\s]*", "", cleaned).strip()
+    return cleaned
+
+
+def _clean_detail_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").replace("\u3000", " ")).strip(" ：:")
+
+
+def _normalize_detail_label(value: str) -> str:
+    return re.sub(r"[\s：:]", "", _clean_detail_text(value))
+
+
+def _html_snippet(soup: Any, limit: int = 240) -> str:
+    text = _clean_detail_text(soup.get_text(" ", strip=True) if hasattr(soup, "get_text") else str(soup))
+    return text[:limit]
+
+
+def _log_detail_extract_miss(
+    logger: Any | None,
+    record: BidRecord,
+    field: str,
+    reason: str,
+    snippet: str,
+) -> None:
+    if not logger:
+        return
+    logger.warning(
+        "gov_detail_field_missing",
+        extra={
+            "field": field,
+            "reason": reason,
+            "title": record.title[:80],
+            "url": record.url,
+            "snippet": snippet[:240],
+        },
+    )
 
 
 def _parse_records(html: str, settings: Settings, logger: Any) -> list[BidRecord]:

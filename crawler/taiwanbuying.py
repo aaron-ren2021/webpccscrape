@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from bs4 import Tag
@@ -21,6 +22,7 @@ from crawler.common import (
 )
 
 SOURCE_NAME = "taiwanbuying"
+COMPUTER_CATEGORY_HINT = "電腦類"
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
@@ -100,11 +102,13 @@ def _parse_records(html: str, settings: Settings) -> list[BidRecord]:
         bid_date = parse_bid_date(date_text)
         amount_value = parse_amount(amount_text)
         url = normalize_url(settings.taiwanbuying_url, link)
+        normalized_category = normalize_taiwanbuying_category(category)
         metadata: dict[str, Any] = {
             "raw_date": date_text,
             "taiwanbuying_category": category,
+            "taiwanbuying_category_normalized": normalized_category,
         }
-        if "電腦類" in (category or "") and is_educational_org(org):
+        if is_taiwanbuying_computer_category(category) and is_educational_org(org):
             metadata.update(
                 {
                     "candidate_only": True,
@@ -128,3 +132,12 @@ def _parse_records(html: str, settings: Settings) -> list[BidRecord]:
             )
         )
     return output
+
+
+def normalize_taiwanbuying_category(category: str) -> str:
+    normalized = unicodedata.normalize("NFKC", category or "")
+    return "".join(normalized.split()).lower()
+
+
+def is_taiwanbuying_computer_category(category: str) -> bool:
+    return COMPUTER_CATEGORY_HINT in normalize_taiwanbuying_category(category)
