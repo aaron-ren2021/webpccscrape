@@ -22,6 +22,8 @@ EDU_ORG_INCLUDE_KEYWORDS = [
     "國小",
     "國中",
     "高中",
+    "女中",
+    "附中",
     "高職",
     "高級中學",
     "教育局",
@@ -95,7 +97,12 @@ STRICT_THEME_KEYWORDS = [
     "thin client",
     "零終端",
     "gpu 伺服器",
+    "高階ai運算",
+    "ai運算",
+    "ai運算與儲存",
     "ai科技教育",
+    "ai智能防護",
+    "ai動捕",
     "aicg",
     "rag",
     "知識庫問答",
@@ -133,13 +140,35 @@ SUPPORT_ONLY_THEME_KEYWORDS = [
 
 # 工作站條件放行：需同時命中上下文詞
 WORKSTATION_CONTEXT_KEYWORDS = [
+    "ai",
     "gpu",
     "人工智慧",
     "高效能",
+    "運算",
+    "儲存",
     "虛擬化",
+    "顯示器",
     "繪圖卡",
     "顯卡",
     "顯示卡",
+    "nvidia",
+    "dgx",
+]
+
+TEACHING_EQUIPMENT_CONTEXT_KEYWORDS = [
+    "數位",
+    "電腦",
+    "資訊",
+    "語言學習",
+    "sanako",
+    "ai",
+    "智慧",
+    "智能",
+    "多媒體",
+    "元宇宙",
+    "動捕",
+    "虛擬實境",
+    "vr",
 ]
 
 # 第三層：內部營運詞（僅供路由/商機分類，不作為是否放行依據）
@@ -201,6 +230,17 @@ EXCLUDE_THEME_KEYWORDS = [
     "認證證書服務",
     "認證服務",
     "檢驗服務",
+    "交通安全",
+    "交通安全裝備",
+    "溫室氣體盤查",
+    "主導查證員",
+    "查證員",
+    "內部稽核員培訓",
+    "能源管理系統內部稽核",
+  #  "iso14064",
+   # "iso 14064",
+   # "iso50001",
+   # "iso 50001",
     # 空調/環控工程：避免「系統」誤命中資訊系統
     "空調",
     "冷氣",
@@ -279,6 +319,8 @@ STABLE_THEME_KEYWORDS = [
     "軟體",
     "虛擬實境",
     "vr",
+    "元宇宙",
+    "動捕",
     "機房",
     # 系統類
     "管理系統",
@@ -298,6 +340,13 @@ STABLE_THEME_KEYWORDS = [
     "自然語言問問題",
     # AI/運算類
     "ai 運算",
+    "ai運算",
+    "高階ai運算",
+    "ai運算與儲存",
+    "ai智能",
+    "ai智能防護",
+    "nvidia",
+    "dgx",
     "ai影像",
     "ai 影像",
     "ai影片",
@@ -306,6 +355,9 @@ STABLE_THEME_KEYWORDS = [
     "自動批改",
     "gpu 運算",
     "運算平台",
+    "語言學習機",
+    "sanako",
+    "教學數位環境",
     "顯卡",
     "顯示卡",
     "資料庫",
@@ -376,7 +428,7 @@ THEME_TAG_MAP = {
         "教育版授權",
         "ees",  # 新增：微軟EES大專授權
     ],
-    "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "伺服器", "dell", "hpe", "lenovo", "jetson agx orin", "超融合設備", "超融合平台", "工作站", "儲存", "storage", "netapp", "pure storage", "qnap", "veeam", "acronis", "commvault"],
+    "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "伺服器", "dell", "hpe", "lenovo", "jetson agx orin", "nvidia", "dgx", "超融合設備", "超融合平台", "工作站", "儲存", "storage", "netapp", "pure storage", "qnap", "veeam", "acronis", "commvault"],
     "電力": ["ups", "不斷電", "不斷電系統", "電力", "配電", "電源", "pdu"],
     "整合": ["整合", "系統整合", "整合系統", "數位整合系統", "超融合", "超融合設備", "超融合平台"],
     "內部營運": INTERNAL_BIZ_KEYWORDS,
@@ -385,6 +437,21 @@ THEME_TAG_MAP = {
 
 def _has_workstation_context_match(text: str) -> bool:
     return "工作站" in text and any(keyword in text for keyword in WORKSTATION_CONTEXT_KEYWORDS)
+
+
+def _has_teaching_equipment_context_match(text: str) -> bool:
+    if "教學設備" not in text:
+        return False
+    if any(keyword in text for keyword in TEACHING_EQUIPMENT_CONTEXT_KEYWORDS):
+        return True
+    return "教務處教學設備" in text
+
+
+def _has_higher_ed_workstation_fallback(title: str, org_name: str) -> bool:
+    normalized_title = title.strip().lower()
+    if normalized_title not in {"工作站", "工作站採購"}:
+        return False
+    return any(keyword in org_name for keyword in ["大學", "學院", "專科"])
 
 
 def has_education_project_context(title: str, summary: str = "", category: str = "") -> bool:
@@ -447,8 +514,8 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     if any(keyword.lower() in text for keyword in direct_gate_keywords):
         return True
 
-    # 條件放行：工作站 + 指定上下文
-    return _has_workstation_context_match(text)
+    # 條件放行：工作站/泛教學設備需搭配指定上下文
+    return _has_workstation_context_match(text) or _has_teaching_equipment_context_match(text)
 
 
 def has_hard_exclusion(title: str, summary: str = "", category: str = "") -> bool:
@@ -545,7 +612,12 @@ def filter_bids(records: Iterable[BidRecord]) -> list[BidRecord]:
 
         metadata = record.metadata or {}
         has_computer_edu_hint = metadata.get("category_hint") == "computer_edu"
-        if not has_computer_edu_hint and not has_theme_match(record.title, record.summary, record.category):
+        org_workstation_fallback = _has_higher_ed_workstation_fallback(record.title, record.organization)
+        if (
+            not has_computer_edu_hint
+            and not has_theme_match(record.title, record.summary, record.category)
+            and not org_workstation_fallback
+        ):
             continue
         record.unit_type = infer_unit_type(record.organization)
         record.tags = infer_theme_tags(record.title, record.summary, record.category)
