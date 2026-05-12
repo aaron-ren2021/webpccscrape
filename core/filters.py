@@ -22,6 +22,8 @@ EDU_ORG_INCLUDE_KEYWORDS = [
     "國小",
     "國中",
     "高中",
+    "女中",
+    "附中",
     "高職",
     "高級中學",
     "教育局",
@@ -77,11 +79,34 @@ STRICT_THEME_KEYWORDS = [
     "office 365",
     "m365",
     "microsoft 365",
+    "microsoft365",
+    "microsoft 365 edu",
+    "microsoft365 edu",
+    "microsoft ees",
+    "microsoft ees 授權",
+    "microsoft ees、ovs-es",
+    "microsoft ees、ove-es",
+    "微軟",
+    "微軟授權",
+    "微軟全校授權",
+    "微軟校園授權",
+    "微軟產品全校授權",
+    "微軟m365",
+    "微軟ees",
+    "微軟ees、ovs-es",
+    "微軟ees、ove-es",
+    "windows",
+    "office",
     "azure",
+    "mircrosoft azure",
+    "azure openai",
+    "openai gpt",
     "windows server",
     "server cal",
     "power bi",
+    "copilot",
     "copilot 教育版",
+    "unified support",
     "備份系統",
     "備份備援",
     "veeam",
@@ -95,7 +120,18 @@ STRICT_THEME_KEYWORDS = [
     "thin client",
     "零終端",
     "gpu 伺服器",
+    "ai伺服器",
+    "ai 伺服器",
+    "ai伺服器叢集",
+    "邊緣ai運算",
+    "邊緣 ai 運算",
+    "人工智慧應用",
+    "高階ai運算",
+    "ai運算",
+    "ai運算與儲存",
     "ai科技教育",
+    "ai智能防護",
+    "ai動捕",
     "aicg",
     "rag",
     "知識庫問答",
@@ -108,6 +144,12 @@ STRICT_THEME_KEYWORDS = [
     "ovs-es 教育版",
     "教育版授權",
     "校園授權",
+    "全校授權",
+    "大量授權",
+    "ca全校授權",
+    "ees 授權",
+    "ove-es",
+    "ove-es 授權",
     "企業 ea",
     "超融合設備",
     "超融合平台",
@@ -133,13 +175,35 @@ SUPPORT_ONLY_THEME_KEYWORDS = [
 
 # 工作站條件放行：需同時命中上下文詞
 WORKSTATION_CONTEXT_KEYWORDS = [
+    "ai",
     "gpu",
     "人工智慧",
     "高效能",
+    "運算",
+    "儲存",
     "虛擬化",
+    "顯示器",
     "繪圖卡",
     "顯卡",
     "顯示卡",
+    "nvidia",
+    "dgx",
+]
+
+TEACHING_EQUIPMENT_CONTEXT_KEYWORDS = [
+    "數位",
+    "電腦",
+    "資訊",
+    "語言學習",
+    "sanako",
+    "ai",
+    "智慧",
+    "智能",
+    "多媒體",
+    "元宇宙",
+    "動捕",
+    "虛擬實境",
+    "vr",
 ]
 
 # 第三層：內部營運詞（僅供路由/商機分類，不作為是否放行依據）
@@ -201,6 +265,17 @@ EXCLUDE_THEME_KEYWORDS = [
     "認證證書服務",
     "認證服務",
     "檢驗服務",
+    "交通安全",
+    "交通安全裝備",
+    "溫室氣體盤查",
+    "主導查證員",
+    "查證員",
+    "內部稽核員培訓",
+    "能源管理系統內部稽核",
+  #  "iso14064",
+   # "iso 14064",
+   # "iso50001",
+   # "iso 50001",
     # 空調/環控工程：避免「系統」誤命中資訊系統
     "空調",
     "冷氣",
@@ -241,6 +316,7 @@ STABLE_THEME_KEYWORDS = [
     "電腦設備",
     "筆記型電腦",
     "平板電腦",
+    "ipados",
     "平板",
     "周邊設備",
     "學習載具",
@@ -252,7 +328,11 @@ STABLE_THEME_KEYWORDS = [
     "macbook",
     "網路設備",
     "無線網路",
+    "無線網路設備",
+    "無線基地台",
+    "基地臺",
     "wi-fi",
+    "wifi",
     "aruba",
     "cisco meraki",
     "ruckus",
@@ -261,11 +341,19 @@ STABLE_THEME_KEYWORDS = [
     "路由器",
     "基地台",
     "access point",
+    "終端運算設備",
     "負載平衡",
+    "電視牆",
+    "顯示牆",
+    "拼接顯示",
+    "拼接螢幕",
+    "led顯示",
+    "led 顯示",
     "顯示器",
     "觸控",
     "電子白板",
     "儲存",
+    "nas",
     "儲存系統",
     "磁碟陣列",
     "storage",
@@ -275,17 +363,34 @@ STABLE_THEME_KEYWORDS = [
     "nvme",
     "雲端",
     "資安",
+    "防毒",
+    "卡巴斯基",
+    "kaspersky",
     "軟體訂閱",
     "軟體",
+    "授權軟體",
+    "授權租約",
+    "軟體租約",
+    "軟體授權",
+    "軟體維護",
     "虛擬實境",
     "vr",
+    "元宇宙",
+    "動捕",
     "機房",
     # 系統類
     "管理系統",
     "管理平台",
+    "認證系統",
+    "認證伺服器",
+    "維護服務契約書",
     "資訊系統",
     "整合系統",
     "數位整合系統",
+    "智慧教室",
+    "教室設備",
+    "智能學習支援系統",
+    "基礎建設平台",
     "教學助理",
     "ai助教",
     "lms",
@@ -298,6 +403,19 @@ STABLE_THEME_KEYWORDS = [
     "自然語言問問題",
     # AI/運算類
     "ai 運算",
+    "ai運算",
+    "邊緣ai",
+    "邊緣 ai",
+    "高階ai運算",
+    "ai運算與儲存",
+    "ai智能",
+    "ai無線",
+    "ai 無線",
+    "ai智服",
+    "ai智服系統",
+    "ai智能防護",
+    "nvidia",
+    "dgx",
     "ai影像",
     "ai 影像",
     "ai影片",
@@ -306,6 +424,9 @@ STABLE_THEME_KEYWORDS = [
     "自動批改",
     "gpu 運算",
     "運算平台",
+    "語言學習機",
+    "sanako",
+    "教學數位環境",
     "顯卡",
     "顯示卡",
     "資料庫",
@@ -329,8 +450,9 @@ STABLE_THEME_KEYWORDS = [
 
 THEME_TAG_MAP = {
     "資安": ["資安", "資訊安全", "防火牆", "弱點", "防毒", "零信任", "fortigate", "palo alto", "sentinelone", "crowdstrike", "tenable", "email security", "郵件安全", "dlp", "防釣魚", "rms", "ims", "ad 漏洞", "災難復原"],
-    "雲端": ["雲端", "cloud", "saas", "iaas", "paas", "azure", "m365", "office 365", "microsoft 365", "onedrive", "teams", "outlook", "vm", "pve", "虛擬化", "vmware", "hyper-v", "citrix", "虛擬桌面"],
-    "網路": ["網路", "無線", "交換器", "路由器", "wifi", "wi-fi", "ap", "access point", "aruba", "meraki", "ruckus"],
+    "雲端": ["雲端", "cloud", "saas", "iaas", "paas", "azure", "mircrosoft azure", "azure openai", "openai gpt", "m365", "office 365", "microsoft 365", "microsoft365", "microsoft 365 edu", "microsoft365 edu", "onedrive", "teams", "outlook", "vm", "pve", "虛擬化", "vmware", "hyper-v", "citrix", "虛擬桌面"],
+    "網路": ["網路", "無線", "交換器", "路由器", "wifi", "wi-fi", "ap", "access point", "aruba", "meraki", "ruckus", "基地臺", "基地台"],
+    "顯示設備": ["電視牆", "顯示牆", "拼接顯示", "拼接螢幕", "led顯示", "led 顯示", "顯示器", "電子白板", "觸控"],
     "軟體": [
         "軟體",
         "授權",
@@ -353,9 +475,26 @@ THEME_TAG_MAP = {
         "power bi",
         "m365",
         "microsoft 365",
+        "microsoft365",
+        "microsoft 365 edu",
+        "microsoft365 edu",
+        "microsoft ees",
+        "微軟",
+        "微軟授權",
+        "微軟全校授權",
+        "微軟校園授權",
+        "全校授權",
+        "校園授權",
+        "大量授權",
+        "windows",
+        "office",
+        "azure",
+        "mircrosoft azure",
+        "unified support",
         "windows server",
         "server cal",
         "ees",
+        "ove-es",
         "fabric",
         "m365 cowork",
         "segma",
@@ -376,7 +515,7 @@ THEME_TAG_MAP = {
         "教育版授權",
         "ees",  # 新增：微軟EES大專授權
     ],
-    "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "伺服器", "dell", "hpe", "lenovo", "jetson agx orin", "超融合設備", "超融合平台", "工作站", "儲存", "storage", "netapp", "pure storage", "qnap", "veeam", "acronis", "commvault"],
+    "機房": ["機房", "server room", "機櫃", "電力", "gpu 伺服器", "server", "伺服器", "dell", "hpe", "lenovo", "jetson agx orin", "nvidia", "dgx", "超融合設備", "超融合平台", "工作站", "儲存", "storage", "nas", "netapp", "pure storage", "qnap", "veeam", "acronis", "commvault"],
     "電力": ["ups", "不斷電", "不斷電系統", "電力", "配電", "電源", "pdu"],
     "整合": ["整合", "系統整合", "整合系統", "數位整合系統", "超融合", "超融合設備", "超融合平台"],
     "內部營運": INTERNAL_BIZ_KEYWORDS,
@@ -385,6 +524,21 @@ THEME_TAG_MAP = {
 
 def _has_workstation_context_match(text: str) -> bool:
     return "工作站" in text and any(keyword in text for keyword in WORKSTATION_CONTEXT_KEYWORDS)
+
+
+def _has_teaching_equipment_context_match(text: str) -> bool:
+    if "教學設備" not in text:
+        return False
+    if any(keyword in text for keyword in TEACHING_EQUIPMENT_CONTEXT_KEYWORDS):
+        return True
+    return "教務處教學設備" in text
+
+
+def _has_higher_ed_workstation_fallback(title: str, org_name: str) -> bool:
+    normalized_title = title.strip().lower()
+    if normalized_title not in {"工作站", "工作站採購"}:
+        return False
+    return any(keyword in org_name for keyword in ["大學", "學院", "專科"])
 
 
 def has_education_project_context(title: str, summary: str = "", category: str = "") -> bool:
@@ -447,8 +601,8 @@ def has_theme_match(title: str, summary: str = "", category: str = "") -> bool:
     if any(keyword.lower() in text for keyword in direct_gate_keywords):
         return True
 
-    # 條件放行：工作站 + 指定上下文
-    return _has_workstation_context_match(text)
+    # 條件放行：工作站/泛教學設備需搭配指定上下文
+    return _has_workstation_context_match(text) or _has_teaching_equipment_context_match(text)
 
 
 def has_hard_exclusion(title: str, summary: str = "", category: str = "") -> bool:
@@ -545,7 +699,12 @@ def filter_bids(records: Iterable[BidRecord]) -> list[BidRecord]:
 
         metadata = record.metadata or {}
         has_computer_edu_hint = metadata.get("category_hint") == "computer_edu"
-        if not has_computer_edu_hint and not has_theme_match(record.title, record.summary, record.category):
+        org_workstation_fallback = _has_higher_ed_workstation_fallback(record.title, record.organization)
+        if (
+            not has_computer_edu_hint
+            and not has_theme_match(record.title, record.summary, record.category)
+            and not org_workstation_fallback
+        ):
             continue
         record.unit_type = infer_unit_type(record.organization)
         record.tags = infer_theme_tags(record.title, record.summary, record.category)

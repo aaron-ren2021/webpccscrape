@@ -74,6 +74,70 @@ def test_filter_bids_by_org_and_theme() -> None:
     assert output[0].title == "AI運算伺服器採購案"
 
 
+def test_education_it_0511_cases_are_notified() -> None:
+    records = [
+        _bid("終端運算設備(含機櫃)一式", "國立中興大學"),
+        _bid("智慧教室設備採購案", "臺中市立文山國民中學"),
+        _bid("115年師培智慧教室設備「互動顯示器」", "國立高雄師範大學"),
+        _bid("智能學習支援系統之基礎建設平台1式", "輔英科技大學"),
+    ]
+
+    output = filter_bids(records)
+
+    assert [record.title for record in output] == [record.title for record in records]
+
+
+def test_user_reported_microsoft_tvwall_and_infra_cases_are_notified() -> None:
+    records = [
+        _bid("115年「校園無線網路設備強化及更新」採購案", "國立高雄師範大學"),
+        _bid("人工智慧應用工程系「整合式儲能裝置量測機台」購案", "國立勤益科技大學"),
+        _bid("電腦相關設備一批", "國立中興大學"),
+        _bid("115學年度iPadOS作業系統平板電腦及行動充電車財物採購案", "國立高科實驗高級中等學校"),
+        _bid("微軟全校授權軟體", "某某大學"),
+        _bid("電腦(adantech MIC-743-AT)/2台/具邊緣AI運算系統", "某某大學"),
+        _bid("澎湖縣115年中小學校園Windows及Office使用授權採購案", "澎湖縣政府"),
+        _bid("115年微軟教職員工生授權租約", "某某大學"),
+        _bid("Microsoft EES、OVE-ES授權最新版 Microsoft365 EDU for Education全校授權合約一年期", "某某大學"),
+        _bid("大專校院微軟EES、OVS-ES全校授權軟體", "某某大學"),
+        _bid("資訊中心-微軟校園授權FTE86一年份", "某某大學"),
+        _bid("資通系統虛擬化雲端服務", "某某大學"),
+        _bid("115年臺藝大AI伺服器叢集建置案", "國立臺灣藝術大學"),
+        _bid("微軟M365全校授權最新版3年暨認證系統防護主機案", "某某大學"),
+        _bid("伺服器共約額外項擴充模組案", "某某大學"),
+        _bid("維護服務契約書", "某某大學"),
+        _bid("Adobe Acrobat軟體租約", "某某大學"),
+        _bid("數位無線電系統伺服器主機檢測工作", "某某大學"),
+        _bid("115年-118年微軟支援Unified Support服務案", "某某大學"),
+        _bid("校園AI智服系統1式", "某某大學"),
+        _bid("防毒軟體採購", "某某大學"),
+        _bid("科研採購(NAS)", "某某大學"),
+        _bid("微軟 Copilot 授權軟體 7 個月", "某某大學"),
+        _bid("電視牆", "某某大學"),
+        _bid("Azure OpenAI GPT 語言模型訂閱服務", "某某大學"),
+        _bid("Mircrosoft Azure公有雲平台租用服務", "某某大學"),
+        _bid("資管電腦主機61台和AI伺服器1台", "某某大學"),
+        _bid("網路交換器乙項", "某某大學"),
+        _bid("115年認證伺服器系統維護", "某某大學"),
+        _bid("卡巴斯基進階版校園防毒軟體授權租約", "某某大學"),
+        _bid("114 學年度Adobe Creative Cloud 一年授權採購案", "某某大學"),
+        _bid("AI無線領夾麥克風(1對2)等7項採購案", "某某大學"),
+        _bid("微軟CA全校授權 (2年合約)", "某某大學"),
+        _bid("數位教材製作軟體全校授權一年案", "某某大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+
+    assert output_titles == {record.title for record in records}
+
+
+def test_user_reported_cases_infer_expected_tags() -> None:
+    assert "顯示設備" in infer_theme_tags("電視牆")
+    assert {"雲端", "軟體"}.issubset(set(infer_theme_tags("Microsoft EES、OVS-ES Microsoft365 EDU 全校授權")))
+    assert {"雲端", "軟體"}.issubset(set(infer_theme_tags("Azure OpenAI GPT 語言模型訂閱服務")))
+    assert "網路" in infer_theme_tags("無線基地台更換")
+    assert "機房" in infer_theme_tags("科研採購(NAS)")
+
+
 def test_computer_edu_hint_passes_for_education_org_without_exclusion() -> None:
     record = _bid("115年度設備採購", "某某大學")
     record.metadata = {"category_hint": "computer_edu"}
@@ -126,10 +190,13 @@ def test_false_positive_regressions_are_excluded() -> None:
         ("某某高中", "校務評鑑認可作業採購案"),
         ("新北市立金山高級中學", "114學年度第2期高中完免入學挹注計畫資本門財物(解剖顯微鏡、顯微鏡專用影像擷取裝置)採購案"),
         ("國立臺灣科技大學", "電力品質量測與分析系統1套"),
+        ("高雄市政府教育局", "高雄市政府教育局115年度增充交通安全裝備採購"),
+        ("新北市政府教育局", "新北市ISO14064-1：2018溫室氣體盤查標準主導查證員、ISO 14064-2：2019專案層級確/查證員及ISO50001：2018能源管理系統內部稽核員培訓計畫"),
     ]
 
     for _org, title in regression_cases:
         assert has_theme_match(title) is False, title
+        assert filter_bids([_bid(title, _org)]) == [], title
 
 
 def test_furniture_procurement_in_computer_classroom_is_excluded() -> None:
@@ -314,6 +381,62 @@ def test_user_reported_2026_05_missed_bids_are_now_included() -> None:
     assert len(output_titles) == len(records)
     for record in records:
         assert record.title in output_titles
+
+
+def test_user_reported_2026_05_filter_review_missed_bids_are_now_included() -> None:
+    records = [
+        _bid("高階AI運算設備建置壹式", "國立成功大學"),
+        _bid("資工系AI運算與儲存整合建置案", "明新科技大學"),
+        _bid("115年雙十國中校園安防AI智能防護設備採購案", "臺中市立雙十國中"),
+        _bid("教務處教學設備一批採購案", "馬偕醫護管理專科"),
+        _bid("語言學習機（SANAKO 同等品 63ST）", "長庚科技大學"),
+        _bid("多媒體與遊戲發展系元宇宙AI動捕系統", "明新科技大學"),
+        _bid("工作站", "國立臺北科技大學"),
+        _bid("電腦主機、工作站及顯示器一批", "國立成功大學"),
+        _bid("新北高中115年筆記型電腦採購", "新北高中"),
+        _bid("115年度平板電腦採購案", "中山女中"),
+        _bid("教學數位環境優化設備採購案", "政大附中"),
+        _bid("電腦(含螢幕)10組", "國立成功大學"),
+        _bid("工作站繪圖卡壹張", "國立成功大學"),
+        _bid("NVIDIA DGX Spark 桌上型AI伺服器", "國立成功大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert len(output_titles) == len(records)
+    for record in records:
+        assert record.title in output_titles
+
+
+def test_generic_teaching_equipment_requires_digital_or_known_context() -> None:
+    records = [
+        _bid("教學設備採購案", "某某大學"),
+        _bid("教學設備一批採購案", "某某高中"),
+        _bid("教學數位環境優化設備採購案", "某某高中"),
+        _bid("語言學習教學設備採購案", "某某大學"),
+        _bid("教務處教學設備一批採購案", "某某專科"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert "教學設備採購案" not in output_titles
+    assert "教學設備一批採購案" not in output_titles
+    assert "教學數位環境優化設備採購案" in output_titles
+    assert "語言學習教學設備採購案" in output_titles
+    assert "教務處教學設備一批採購案" in output_titles
+
+
+def test_general_security_equipment_still_requires_ai_or_it_context() -> None:
+    records = [
+        _bid("校園安防設備採購案", "某某國中"),
+        _bid("校園防護設備採購案", "某某國中"),
+        _bid("校園安防AI智能防護設備採購案", "某某國中"),
+        _bid("門禁管理系統採購案", "某某大學"),
+    ]
+
+    output_titles = {record.title for record in filter_bids(records)}
+    assert "校園安防設備採購案" not in output_titles
+    assert "校園防護設備採購案" not in output_titles
+    assert "校園安防AI智能防護設備採購案" in output_titles
+    assert "門禁管理系統採購案" not in output_titles
 
 
 def test_company_service_and_product_scope_is_included() -> None:
