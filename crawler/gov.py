@@ -64,6 +64,41 @@ def _parse_bid_bond_value(value: str) -> str:
 
 
 def fetch_bids(settings: Settings, logger: Any) -> list[BidRecord]:
+    """Fetch gov.pcc bids through the configured backend.
+
+    Hybrid mode is deliberately fail-open to the legacy implementation so the
+    worst case remains the previous Playwright/requests behavior.
+    """
+    backend = str(getattr(settings, "crawler_backend", "hybrid") or "hybrid").strip().lower()
+    if backend not in {"hybrid", "scrapling", "playwright_legacy"}:
+        logger.warning("gov_unknown_backend_fallback_legacy", extra={"backend": backend})
+        backend = "playwright_legacy"
+
+    if backend == "playwright_legacy" or not getattr(settings, "enable_firsthand_gov", True):
+        return fetch_bids_legacy(settings, logger)
+
+    fallback_error = ""
+    try:
+        from crawler.scrapling_gov import fetch_bids_scrapling
+
+        records = fetch_bids_scrapling(settings, logger)
+        if records:
+            logger.info("source_parsed", extra={"source": SOURCE_NAME, "count": len(records), "method": "scrapling"})
+            return records
+        logger.warning("gov_scrapling_empty_fallback_legacy", extra={"backend": backend})
+    except Exception as exc:
+        fallback_error = str(exc)
+        logger.warning(
+            "gov_scrapling_failed_fallback_legacy",
+            extra={"backend": backend, "error": str(exc)},
+        )
+
+    if backend == "scrapling":
+        raise RuntimeError(f"Scrapling gov backend failed: {fallback_error or 'no records parsed'}")
+    return fetch_bids_legacy(settings, logger)
+
+
+def fetch_bids_legacy(settings: Settings, logger: Any) -> list[BidRecord]:
     """Fetch bids from gov.pcc main list page.
     
     Uses Playwright+Stealth if enabled, falls back to requests if disabled or failed.

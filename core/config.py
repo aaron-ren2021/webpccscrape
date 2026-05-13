@@ -57,6 +57,11 @@ class Settings:
     request_delay_min: float = 2.0
     request_delay_max: float = 5.0
 
+    crawler_backend: str = "hybrid"
+    enable_firsthand_gov: bool = True
+    scrapling_concurrent_requests: int = 4
+    scrapling_adaptive: bool = True
+
     enable_playwright: bool = True  # 🔥 預設啟用 Playwright+Stealth
     playwright_timeout_ms: int = 20000
 
@@ -201,6 +206,12 @@ class Settings:
             request_backoff_factor=_parse_float(os.getenv("REQUEST_BACKOFF_FACTOR"), 0.8),
             request_delay_min=_parse_float(os.getenv("REQUEST_DELAY_MIN"), 2.0),
             request_delay_max=_parse_float(os.getenv("REQUEST_DELAY_MAX"), 5.0),
+            crawler_backend=os.getenv("CRAWLER_BACKEND", "hybrid").strip().lower() or "hybrid",
+            enable_firsthand_gov=_parse_bool(os.getenv("ENABLE_FIRSTHAND_GOV"), True),
+            scrapling_concurrent_requests=max(
+                1, _parse_int(os.getenv("SCRAPLING_CONCURRENT_REQUESTS"), 4)
+            ),
+            scrapling_adaptive=_parse_bool(os.getenv("SCRAPLING_ADAPTIVE"), True),
             enable_playwright=_parse_bool(os.getenv("ENABLE_PLAYWRIGHT"), True),
             playwright_timeout_ms=_parse_int(os.getenv("PLAYWRIGHT_TIMEOUT_MS"), 20000),
             recent_days=_parse_int(os.getenv("RECENT_DAYS"), 1),

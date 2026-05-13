@@ -54,8 +54,8 @@ def run_monitor(settings: Settings, logger: Any | None = None, persist_state: bo
 
     # Define sources to fetch
     sources = [
-        ("taiwanbuying", fetch_taiwanbuying_bids),
         ("gov_pcc", fetch_gov_bids),
+        ("taiwanbuying", fetch_taiwanbuying_bids),
     ]
     
     # Add g0v if enabled
