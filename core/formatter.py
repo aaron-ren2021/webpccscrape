@@ -6,7 +6,6 @@ from html import escape
 from typing import Optional
 
 from core.filters import count_by_unit_type
-from core.high_amount import evaluate_high_amount
 from core.models import BidRecord
 
 # Constants for bid bond free values
@@ -71,27 +70,11 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
     for record in records:
         tag_counter.update(record.tags)
 
-    high_amount_rows = [
-        (record, evaluate_high_amount(record, high_amount_threshold))
-        for record in records
-    ]
-    high_amount_rows = [(record, decision) for record, decision in high_amount_rows if decision.is_high_amount]
-
     # Find earliest deadline
     earliest_deadline = find_earliest_deadline(records)
 
     unit_summary = "、".join(f"{escape(k)}: {v}" for k, v in sorted(unit_counts.items())) or "無"
     tag_summary = "、".join(f"{escape(tag)}({count})" for tag, count in tag_counter.most_common()) or "無"
-
-    high_amount_summary = "；".join(
-        (
-            f"{escape(item.organization)} / {escape(item.title)} / {format_amount(item)}"
-            f"（{escape('、'.join(decision.reasons[:2]))}）"
-        )
-        for item, decision in high_amount_rows[:3]
-    )
-    if not high_amount_summary:
-        high_amount_summary = "無"
 
     # Meta line
     meta_text = f"查詢日期：{escape(run_date.isoformat())}"
@@ -147,9 +130,6 @@ def render_email_html(records: list[BidRecord], run_date: date, high_amount_thre
                   </div>
                   <div style="font-size:13px;color:#374151;padding:4px 0;">
                     <strong>&#127991; 主題標籤：</strong>{tag_summary}
-                  </div>
-                  <div style="font-size:13px;color:#374151;padding:4px 0;">
-                    <strong>&#128176; 高金額案件：</strong>{escape(high_amount_summary)}
                   </div>
                 </td>
               </tr>
