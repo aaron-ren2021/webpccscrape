@@ -1,241 +1,442 @@
-# Azure 教育資訊標案自動監控系統
+# 教育資訊標案監控系統
+
+每天定時彙整教育單位相關的資訊/軟體/網路/AI 標案，經過規則篩選、去重、詳細資料補強後，以 HTML Email 通知，並可選擇建立 GitHub Issue 追蹤高優先案件。
 
 ## 1. 專案目的
-本專案每天定時抓取多個來源的標案資料，篩選「教育單位」且「資訊設備/資訊服務」相關案件，去重後以 HTML Email 通知。
 
-**資料來源（多層容錯）**：
-1. **台灣採購公報**（taiwanbuying）— Playwright + Stealth 抓取
-2. **政府電子採購網**（gov.pcc）— Playwright + Stealth 抓取列表頁
-3. **開放資料 API**（https://pcc-api.openfun.app）— 結構化補充來源
+這個專案的核心目標是：
 
-**郵件內容包含**：
-- 標案標題、機關名稱、截止投標日期
-- **預算金額**：列表頁無此欄位時顯示「詳見連結」，引導使用者點擊連結查看
-- **押標金/開標時間**：詳細頁資訊，無法取得時顯示「詳見連結」
-- 直接連結至標案詳細頁面
+- 從多個來源抓取標案資料
+- 聚焦教育單位與教育場域相關案件
+- 篩出資訊設備、資訊服務、校園授權、網路、AI 運算等高相關標案
+- 避免重複通知
+- 補齊預算金額、押標金、截止投標、開標時間等詳細欄位
+- 以 Email 發送每日新案摘要
 
-**容錯策略**：
-- 列表頁資料優先（標題、機關、截止日期）
-- 詳細頁無法取得時優雅降級，不影響通知
-- 多來源自動 fallback，確保每日穩定通知
+當日沒有新案件時，不寄送通知，只在 log 留下 `no new bids`。
 
-若當日無新案件則不寄信，僅在 log 記錄 `no new bids`。
+## 2. 目前實際架構盤點
 
-## 2. 架構說明
-- 執行環境：Azure Functions (Python Timer Trigger)
-- 觸發時間：每天台灣時間 08:30（UTC `00:30`）
-- 抓取層：
-  - 預設 `Playwright + Stealth`（真人行為模擬/指紋隱匿/identity 輪轉）
-  - 無法啟動瀏覽器時自動 fallback `requests + BeautifulSoup`
-- 邏輯層：
-  - 關鍵字篩選（教育單位 + 主題）
-  - 精準去重 + 近似去重
-  - **詳細資料補充**：針對政府電子採購網標案，額外抓取詳細頁面以取得預算金額與押標金資訊
-  - 新案判斷（未通知過）
-- 儲存層：
-  - 優先 Azure Table Storage
-  - 失敗 fallback Azure Blob Storage JSON
-- 通知層：
-  - 優先 ACS Email
-  - 未配置/失敗 fallback SMTP
+### 2.1 入口
+
+- `run_local.py`
+  - 本機執行入口
+  - 支援 `--no-send`、`--preview-html`、`--no-persist-state`
+  - 會把執行紀錄寫入 `logs/cron.log`
+- `function_app.py`
+  - Azure Functions Timer Trigger 入口
+  - 排程為每天 UTC `00:30`，對應台灣時間 `08:30`
+
+兩個入口最後都會進到 `core.pipeline.run_monitor()`，因此真正的系統 orchestration 集中在 pipeline。
+
+### 2.2 執行資料流
+
+```text
+run_local.py / function_app.py
+            ↓
+     core.config.Settings
+            ↓
+   core.pipeline.run_monitor()
+            ↓
+  crawler.taiwanbuying / crawler.gov / crawler.g0v
+            ↓
+  台灣採購公報候選提示合併到 gov 正式案件
+            ↓
+      core.filters.filter_bids()
+            ↓
+   core.dedup.deduplicate_bids()
+            ↓
+ storage.detail_cache_store 套用快取
+            ↓
+ gov/g0v inline detail enrichment
+            ↓
+ 排除過期案件 / 排除 candidate-only 案件
+            ↓
+ 可選 AI 分類與優先度標記
+            ↓
+ 狀態比對（local JSON / Azure Table / Blob）
+            ↓
+ core.formatter 產生 HTML 與主旨
+            ↓
+ notify.dispatcher -> ACS 或 SMTP
+            ↓
+ 可選 GitHub issue 建立
+            ↓
+ 標記已通知 / detail backfill queue
+```
+
+### 2.3 來源角色分工
+
+- `crawler/taiwanbuying.py`
+  - 主要用來抓候選案件與類別提示
+  - 在 pipeline 中會作為 `candidate_only` 線索，協助補強 `gov_pcc` 正式案件判斷
+- `crawler/gov.py`
+  - 正式通知主來源之一
+  - 先抓列表頁，再視需要補抓詳細頁資訊
+- `crawler/g0v.py`
+  - `https://pcc-api.openfun.app` 開放資料來源
+  - 作為結構化補充來源，並可進一步補強連結與詳細欄位
+
+目前 pipeline 不是把三個來源完全平行視為相同資料，而是：
+
+- `taiwanbuying` 偏向候選提示來源
+- `gov_pcc` 與 `g0v` 是進入正式篩選與通知的主要資料來源
+
+### 2.4 核心模組職責
+
+- `core/config.py`
+  - 集中解析 `.env` / App Settings
+  - 目前已涵蓋 crawler、stealth、proxy、state、detail cache、AI、embedding、GitHub 等設定
+- `core/models.py`
+  - 定義 `BidRecord`、`RunResult`、`SourceRunStatus`
+  - `BidRecord` 已含列表欄位、detail 欄位、AI 欄位與 metadata
+- `core/filters.py`
+  - 教育單位判斷
+  - 嚴格主題詞、寬鬆主題詞、排除詞、上下文條件
+  - 是第一層商業規則篩選
+- `core/dedup.py`
+  - 標題/機關/日期等層面的去重
+- `core/normalize.py`
+  - 日期、金額、文字正規化與截止日判斷
+- `core/stable_keys.py`
+  - 產生通知穩定鍵，降低跨來源重複通知
+- `core/formatter.py`
+  - 產生 Email HTML 與主旨
+- `core/pipeline.py`
+  - 整個系統的執行骨幹
+  - 整合抓取、過濾、去重、detail enrichment、AI 分類、通知與狀態寫回
+
+### 2.5 詳細資料補強機制
+
+目前 detail enrichment 已經不是單一步驟，而是兩層設計：
+
+- Inline enrichment
+  - 在 `core.pipeline.run_monitor()` 內，對仍缺少 detail 欄位的案件立即補抓
+  - 優先提升當次通知內容完整度
+- Background backfill
+  - 由 `storage/detail_cache_store.py` 管理缺漏佇列與快取
+  - `core/detail_backfill.py` 可針對待補案件批次回填
+
+`DetailCacheStore` 目前負責：
+
+- 套用既有 detail cache
+- 維護待補隊列
+- 記錄成功/失敗與嘗試次數
+- 以 TTL 清理過期 detail 資料
+
+### 2.6 狀態儲存策略
+
+通知去重狀態目前有三種路徑：
+
+- `storage/local_state_store.py`
+  - 本機 JSON 狀態檔
+  - 支援舊格式遷移與 retention 清理
+- `storage/table_store.py`
+  - Azure Table Storage
+- `storage/blob_store.py`
+  - Azure Blob JSON fallback
+
+如果不持久化，pipeline 也會退回 in-memory store，但那只適合單次測試。
+
+### 2.7 通知與追蹤
+
+- `notify/dispatcher.py`
+  - 統一通知入口
+  - `dry_run` 直接跳過寄送
+  - 有 ACS 就先走 ACS，失敗再 fallback SMTP
+- `notify/email_acs.py`
+  - Azure Communication Services Email
+- `notify/email_smtp.py`
+  - SMTP 備援
+- `notify/github_notify.py`
+  - 若設定 GitHub token/repo，會為 AI 判定 `high` 的案件建立 Issue
+
+### 2.8 反偵測與抓取支援層
+
+`crawler/` 目前除了來源抓取檔，也包含一整層共用支援：
+
+- `crawler/stealth/`
+  - 瀏覽器指紋與 stealth 初始化
+- `crawler/behavior/`
+  - 人類行為模擬與節流
+- `crawler/session/`
+  - session 持久化
+- `crawler/network/`
+  - proxy 管理
+- `crawler/detection/`
+  - 封鎖、captcha、挑戰頁等事件記錄
+- `crawler/stealth_runner.py`
+  - 反偵測統一入口
+- `crawler/common.py`
+  - 共用 session / HTTP helper
+
+這代表目前系統不是單純 requests crawler，而是同時支援：
+
+- `requests + BeautifulSoup`
+- `Playwright + Stealth`
+
+並且可透過設定切換或降級。
+
+## 3. 專案結構
 
 ```text
 .
-├─ function_app.py
-├─ run_local.py
-├─ host.json
+├─ function_app.py                 # Azure Timer Trigger 入口
+├─ run_local.py                    # 本機執行入口
+├─ run_detail_backfill.py          # detail backfill 執行入口
+├─ check_sources.py                # 多來源健康檢查
+├─ verify_stealth.py               # stealth 驗證工具
+├─ summarize_cron_log.py           # cron log 摘要工具
 ├─ requirements.txt
+├─ host.json
 ├─ local.settings.json.example
-├─ .env.example
-├─ STEALTH_MIGRATION_COMPLETE.md   # Stealth/Playwright 重大改版紀錄
-├─ verify_stealth.py               # Stealth/真人行為模擬驗證腳本
+├─ AGENTS.md
 ├─ crawler/
 │  ├─ common.py
 │  ├─ gov.py
 │  ├─ taiwanbuying.py
-│  ├─ stealth/         # 指紋隱匿/瀏覽器初始化
-│  ├─ behavior/        # 人類行為模擬/節流
-│  ├─ session/         # Session 持久化
-│  ├─ network/         # Proxy 輪轉
-│  ├─ detection/       # 偵測事件記錄
-│  └─ stealth_runner.py# 反偵測統一入口
+│  ├─ g0v.py
+│  ├─ batch_crawler.py
+│  ├─ identity_manager.py
+│  ├─ stealth_runner.py
+│  ├─ analytics/
+│  ├─ behavior/
+│  ├─ detection/
+│  ├─ network/
+│  ├─ session/
+│  └─ stealth/
 ├─ core/
+│  ├─ ai_classifier.py
 │  ├─ config.py
 │  ├─ dedup.py
+│  ├─ detail_backfill.py
+│  ├─ embedding_categories.py
+│  ├─ embedding_recall.py
 │  ├─ filters.py
 │  ├─ formatter.py
+│  ├─ high_amount.py
 │  ├─ models.py
 │  ├─ normalize.py
-│  └─ pipeline.py
+│  ├─ pipeline.py
+│  └─ stable_keys.py
 ├─ storage/
 │  ├─ blob_store.py
+│  ├─ detail_cache_store.py
+│  ├─ local_state_store.py
 │  └─ table_store.py
 ├─ notify/
 │  ├─ dispatcher.py
 │  ├─ email_acs.py
-│  └─ email_smtp.py
-└─ tests/
-  ├─ test_dedup.py
-  ├─ test_filters.py
-  └─ test_normalize.py
-```
-```
-
-## 4. 安裝方式
-1. 建立 Python 3.12.3 環境
-2. 安裝依賴：
-```bash
-pip install -r requirements.txt
-```
-3. 複製設定檔：
-```bash
-cp .env.example .env
-cp local.settings.json.example local.settings.json
-```
-4. Playwright 及瀏覽器安裝（**必須**）：
-```bash
-pip install playwright
-playwright install chromium
-```
-5. （可選）驗證 Stealth/真人行為模擬：
-```bash
-python verify_stealth.py
+│  ├─ email_smtp.py
+│  └─ github_notify.py
+├─ tests/
+│  ├─ test_dedup.py
+│  ├─ test_detail_backfill.py
+│  ├─ test_detail_cache_store.py
+│  ├─ test_filters.py
+│  ├─ test_formatter.py
+│  ├─ test_g0v.py
+│  ├─ test_gov.py
+│  ├─ test_hybrid_scoring.py
+│  ├─ test_local_state_store.py
+│  ├─ test_normalize.py
+│  ├─ test_pipeline_notifications.py
+│  └─ ...
+└─ docs/
+   ├─ ADVANCED_ANTI_DETECTION.md
+   ├─ IDENTITY_ROTATION_GUIDE.md
+   └─ ...
 ```
 
-**本地部署注意事項：**
-- 本專案已移除 Azure 相關套件，專為本地部署優化。
-- 預設使用記憶體儲存，避免重複通知依賴外部服務。
+## 4. 執行模式
 
-## 5. 本機執行方式
+### 4.1 本機模式
 
-### 5.1 本機測試模式（不寄信、輸出 HTML）
-```bash
-python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
-```
+適合開發、手動巡檢、cron 執行。
 
-### 5.2 本機完整流程（含寄信）
 ```bash
 python run_local.py
 ```
 
-### 5.3 驗證 Stealth/真人行為模擬
+常用變體：
+
+```bash
+python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
+```
+
+### 4.2 Azure Functions 模式
+
+適合雲端定時執行。
+
+- 入口：`function_app.py`
+- Timer Cron：`0 30 0 * * *`
+- Azure 使用 UTC，因此 `00:30 UTC = 08:30 Asia/Taipei`
+
+### 4.3 Detail Backfill 模式
+
+用於補齊先前通知後仍缺少 detail 欄位的案件。
+
+```bash
+python run_detail_backfill.py
+```
+
+## 5. 安裝方式
+
+1. 建立與部署環境一致的 Python 3.11 環境
+2. 安裝依賴
+
+```bash
+pip install -r requirements.txt
+```
+
+3. 準備設定檔
+
+```bash
+cp local.settings.json.example local.settings.json
+```
+
+如果專案另外有 `.env.example`，也可複製後再調整本機設定。
+
+4. 安裝 Playwright 與 Chromium
+
+```bash
+pip install playwright
+playwright install chromium
+```
+
+5. 驗證 stealth 環境
+
 ```bash
 python verify_stealth.py
 ```
 
-### 5.4 單元測試
+## 6. 本機常用指令
+
+### 6.1 本機預覽但不寄信
+
+```bash
+python run_local.py --no-send --preview-html ./output/preview.html --no-persist-state
+```
+
+### 6.2 本機完整流程
+
+```bash
+python run_local.py
+```
+
+### 6.3 執行測試
+
 ```bash
 pytest
+```
 
-
-## 6. 本地部署腳本（Linux）
-
-### 6.1 crontab 定時排程
-
-若需在本地每天工作日 8:30 自動寄信，可用 crontab 設定：
+### 6.4 檢查資料來源健康
 
 ```bash
-crontab -e
+python check_sources.py
 ```
 
-新增以下內容（假設 Python 路徑與專案路徑已正確）：
-
-```
-35 8 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
-```
-
-說明：
-- `30 8 * * 1-5` 代表每週一至五早上 8:30 執行
-- `/home/xcloud/project/webpccscrape/venv/bin/python` 為虛擬環境內的 Python 路徑
-- `>> logs/cron.log 2>&1` 將輸出記錄到 logs/cron.log 檔案
-
-### 6.2 每日彙總排程（可選）
-
-每天早上 9:00 自動產生前一日彙總：
-
-```
-00 9 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python summarize_cron_log.py --log-file logs/cron.log --days 1 >> /home/xcloud/project/webpccscrape/logs/cron_summary.log 2>&1
-```
-
-### 6.2 SMTP 設定
-
-請於 `.env` 設定 SMTP 相關參數，範例如下（以 Outlook 為例）：
-
-```
-SMTP_HOST=smtp-mail.outlook.com
-SMTP_PORT=587
-SMTP_USERNAME=your_account@outlook.com
-SMTP_PASSWORD=your_password_or_app_password
-SMTP_FROM=your_account@outlook.com
-EMAIL_TO=收件人1@example.com,收件人2@example.com
-SMTP_USE_TLS=true
-```
-
-**重要提示：**
-- 如果 Outlook 帳號啟用了雙重驗證（2FA），請使用「應用程式密碼」而非帳號密碼。
-- 申請應用程式密碼：登入 Outlook → 安全性設定 → 應用程式密碼。
-
-### 6.3 BGE-M3 生產設定與每日巡檢
-
-`.env` 建議至少設定：
-
-```bash
-ENABLE_EMBEDDING_RECALL=true
-EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_TOP_K=30
-EMBEDDING_SIMILARITY_THRESHOLD=0.68
-
-# 可選：旁路 A/B（只寫 log，不影響正式通知）
-EMBEDDING_ENABLE_AB_TEST=false
-EMBEDDING_AB_MODEL=
-EMBEDDING_AB_SIMILARITY_THRESHOLD=0.65
-EMBEDDING_AB_TOP_K=30
-
-# 可選：效能告警門檻
-EMBEDDING_TIMEOUT_WARN_MS=3000
-EMBEDDING_MEMORY_WARN_MB=2048
-EMBEDDING_ZERO_RECALL_WARN_DAYS=3
-```
-
-每日巡檢（`logs/cron.log`）重點事件：
-- `local_run_finished`：`crawled_count/filtered_count/deduped_count/new_count/source_success_count/source_failed_count`
-- `keyword_screen_distribution`：`high_confidence/boundary/included_total`
-- `bid_bond_unparsed_summary`：`unparsed_count/top_patterns/sample_count`
-- `embedding_recall_pipeline_step`：`duration_ms/memory_mb/model_name/threshold/top_k`
-- `embedding_recall_done`：`candidate_count/recalled/result_count`
-- `embedding_duration_warning`、`embedding_memory_warning`、`embedding_model_load_failed`
-
-每日摘要工具：
+### 6.5 產生 log 摘要
 
 ```bash
 python summarize_cron_log.py --log-file logs/cron.log --days 7
 ```
 
-若需要每日彙總輸出（可選）：
+## 7. 本地部署與排程
+
+### 7.1 crontab 範例
 
 ```bash
-python summarize_cron_log.py --log-file logs/cron.log --days 1 >> logs/cron_summary.log 2>&1
+crontab -e
 ```
 
-若需要旁路 A/B 比較，查看：
-- `embedding_ab_dataset_row`（統一欄位：`uid/title/keyword_confidence/embedding_similarity/embedding_best_category/decision_source/model_name/threshold`）
-- `embedding_ab_row`
-- `embedding_ab_summary`
+加入：
 
-### 6.4 本地部署狀態記錄說明
+```cron
+35 8 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python run_local.py >> /home/xcloud/project/webpccscrape/logs/cron.log 2>&1
+```
 
-- **本地部署預設使用記憶體儲存**（InMemoryStateStore）
-- 每次執行都是獨立的，不會記錄「已通知過的案件」
-- 如果需要持久化狀態避免重複通知，可以：
-  - 選項 1：設定 Azure Storage（需要 Azure 帳號）
-  - 選項 2：自行實作本地文件儲存（需修改程式碼）
+### 7.2 每日摘要排程範例
 
-## 6. Azure 部署方式
-### 6.1 需要工具
+```cron
+0 9 * * 1-5 cd /home/xcloud/project/webpccscrape && /home/xcloud/project/webpccscrape/venv/bin/python summarize_cron_log.py --log-file logs/cron.log --days 1 >> /home/xcloud/project/webpccscrape/logs/cron_summary.log 2>&1
+```
+
+## 8. 重要設定分類
+
+請以 `core/config.py` 為準；目前 README 只整理主要類別：
+
+- 抓取與來源
+  - `TAIWANBUYING_*`
+  - `GOV_*`
+  - `G0V_*`
+  - `API_ONLY_MODE`
+- 通用 HTTP / timeout / retry
+  - `REQUEST_*`
+  - `REQUEST_DELAY_*`
+- Stealth / session / proxy
+  - `ENABLE_PLAYWRIGHT`
+  - `STEALTH_*`
+  - `PROXY_*`
+- 通知去重與保存
+  - `STATE_RETENTION_DAYS`
+  - `AZURE_STORAGE_CONNECTION_STRING`
+  - `AZURE_TABLE_NAME`
+  - `AZURE_BLOB_*`
+- Detail cache / backfill
+  - `DETAIL_CACHE_*`
+  - `DETAIL_BACKFILL_*`
+- 通知
+  - ACS：`ACS_CONNECTION_STRING`、`ACS_EMAIL_SENDER`
+  - SMTP：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`
+  - 收件者：`EMAIL_TO`
+- AI 分類
+  - `ENABLE_AI_CLASSIFICATION`
+  - `OPENAI_API_KEY`
+  - `ANTHROPIC_API_KEY`
+  - `AI_MODEL`
+  - `OLLAMA_*`
+- Embedding recall
+  - `ENABLE_EMBEDDING_RECALL`
+  - `EMBEDDING_*`
+- GitHub issue tracking
+  - `GITHUB_TOKEN`
+  - `GITHUB_REPO`
+  - `GITHUB_LABELS`
+
+## 9. 儲存與通知行為
+
+### 9.1 新案判斷
+
+pipeline 會先讀取已通知 key，再用 `core/stable_keys.py` 產生穩定識別鍵，避免：
+
+- 同一來源重複通知
+- 不同來源指向同一標案時重複通知
+
+### 9.2 detail 欄位缺漏時的行為
+
+若列表頁或 API 當下取不到完整 detail，系統會：
+
+- 先嘗試 inline enrichment
+- 若仍缺漏，Email 內容允許優雅降級
+- 把案件加入 detail backfill queue，供後續補抓
+
+### 9.3 通知後寫回
+
+當通知成功後，系統會：
+
+- 寫入已通知狀態
+- 將仍缺少 detail 的案件加入待補隊列
+
+## 10. Azure 部署
+
+### 10.1 需要工具
+
 - Azure CLI
 - Azure Functions Core Tools v4
 
-### 6.2 建立資源（範例）
+### 10.2 建立資源範例
+
 ```bash
 az group create -n rg-bid-monitor -l eastasia
 az storage account create -n <storageAccount> -g rg-bid-monitor -l eastasia --sku Standard_LRS
@@ -249,165 +450,89 @@ az functionapp create \
   --functions-version 4
 ```
 
-### 6.3 設定 App Settings
-將 `.env.example` 內參數（不含註解）設定到 Function App Configuration。
+### 10.3 設定 App Settings
 
-### 6.4 部署
+把本機使用的環境變數同步到 Function App Configuration。
+
+### 10.4 部署
+
 ```bash
 func azure functionapp publish <functionAppName>
 ```
 
-## 7. 定時排程說明
-- Timer Cron：`0 30 0 * * *`
-- Azure Timer 使用 UTC，`00:30 UTC = 08:30 Asia/Taipei`
+## 11. 常見故障排除
 
-## 8. 環境變數說明
-請參考 `.env.example`，重點如下：
-- 抓取：`TAIWANBUYING_*`、`GOV_*`
-- 儲存：`AZURE_STORAGE_CONNECTION_STRING`、`AZURE_TABLE_NAME`、`AZURE_BLOB_*`
-- 信件：
-  - ACS：`ACS_CONNECTION_STRING`、`ACS_EMAIL_SENDER`
-  - SMTP：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`
-  - 收件人：`EMAIL_TO`
-- Playwright：`ENABLE_PLAYWRIGHT`
-- Embedding：`ENABLE_EMBEDDING_RECALL`、`EMBEDDING_MODEL`、`EMBEDDING_TOP_K`、`EMBEDDING_SIMILARITY_THRESHOLD`
-- Embedding A/B：`EMBEDDING_ENABLE_AB_TEST`、`EMBEDDING_AB_MODEL`、`EMBEDDING_AB_SIMILARITY_THRESHOLD`、`EMBEDDING_AB_TOP_K`
-- 押標金未解析監控：`BID_BOND_UNPARSED_SAMPLE_SIZE`、`BID_BOND_UNPARSED_RAW_TRUNCATE`、`BID_BOND_UNPARSED_TOP_N`
+### 11.1 抓不到資料
 
-## 9. 常見故障排除
-1. 抓不到資料
-- 檢查 `*_ROW_SELECTORS` / `*_TITLE_SELECTORS` 等 selector。
-- 優先改環境變數，不要先改程式。
-- 動態頁面時啟用 `ENABLE_PLAYWRIGHT=true`（預設已啟用）。
+- 檢查 `*_ROW_SELECTORS`、`*_TITLE_SELECTORS` 等 selector
+- 優先調整環境變數，不要先改程式
+- 若動態頁面變多，確認 Playwright / Chromium 是否安裝完整
 
-2. 只抓到單一來源
-- 另一來源失敗不會中止整體流程，請看 log 的 `source_failed`。
+### 11.2 只有單一來源成功
 
-3. 沒寄信
-- 無新案時正常不寄信，log 會有 `no new bids`。
-- 有新案未寄出時檢查 `notification_failed`。
+- 另一來源失敗不會中止整體流程
+- 先看 log 中的 `source_failed`
 
-4. 重複通知
-- 檢查 Storage 連線設定。
-- Table 失敗會自動 fallback 到 Blob。
+### 11.3 沒寄信
 
-## 10. 多來源容錯策略
+- 無新案時本來就不寄信
+- 若應寄未寄，檢查 `notification_failed`
+- 檢查 ACS 失敗後是否已 fallback SMTP
 
-### 10.1 資料來源優先順序
-1. **taiwanbuying**（台灣採購公報）
-   - 方式：Playwright + Stealth
-   - 狀態：✅ 穩定（約 15-20 筆/天）
+### 11.4 重複通知
 
-2. **gov.pcc**（政府電子採購網）
-   - 列表頁：Playwright + Stealth ✅ 正常（約 900-1000 筆/天）
-   - 詳細頁：❌ CAPTCHA 必擋（`/tps/` 子系統撲克牌驗證）
-   - 策略：**列表頁資料 + 快速探測**（2 筆 URL 測試，全失敗則跳過）
+- 檢查 state store 是否啟用持久化
+- 本機若加上 `--no-persist-state`，仍會讀取既有 state，但不會把本次通知結果寫回
+- 檢查 local JSON / Azure Table / Blob 設定是否正確
 
-3. **pcc-api.openfun.app**（開放資料 API）
-   - 方式：REST API，無需爬蟲
-   - 資料來源：行政院公共工程委員會「政府電子採購網」
-   - 授權：開放 CORS，允許自由取用（需遵守原始資料著作權）
-   - API 端點：
-     - 列表：`GET https://pcc-api.openfun.app/api/listbydate?date=YYYYMMDD`
-     - 資訊：`GET https://pcc-api.openfun.app/api/getinfo`
-   - 狀態：⚠️ 作為補充來源（可能有 1-2 天延遲）
+### 11.5 detail 欄位長期缺漏
 
-### 10.2 Detail 頁面策略
+- 檢查 `detail_cache_*` 與 queue 檔案
+- 執行 `python run_detail_backfill.py`
+- 觀察 `detail_backfill_*`、`detail_cache_*` 相關 log
 
-**列表頁可取得欄位**（gov.pcc）：
-| 欄位 | 來源 | 狀態 |
-|------|------|------|
-| 🏫 機關 | 列表頁 td:nth-child(2) | ✅ |
-| 📋 標案名稱 | 列表頁 td:nth-child(3) | ✅ |
-| ⏰ 截止投標 | 列表頁 td:nth-child(5) | ✅ ROC 格式 115/04/24 |
-| 🔗 詳細連結 | 列表頁 td:nth-child(4) a | ✅ |
+## 12. 反偵測與 Stealth 機制
 
-**詳細頁獨有欄位**（無法穩定取得）：
-- 💰 預算金額、💳 押標金、📌 開標時間
+目前已具備完整的 Playwright + Stealth 支援層，主要能力包含：
 
-**Formatter Fallback 邏輯**：
-```
-預算金額: detail.budget_amount → "詳見連結"
-截止投標: detail.bid_deadline（含時間） → list.bid_date（日期） ✅
-押標金: detail.bid_bond → "詳見連結"
-開標時間: detail.bid_opening_time → "詳見連結"
-```
+- 瀏覽器指紋隱匿
+- 人類行為模擬
+- identity / proxy 輪轉
+- session 持久化
+- 自適應節流與 cooldown
+- 偵測 blocked / captcha / challenge 事件並記錄
 
-### 10.3 CAPTCHA 應對
+相關模組位於：
 
-gov.pcc 架構：
-- `/prkms/` 子系統（列表頁）— stealth 可正常抓取
-- `/tps/` 子系統（詳細頁）— **必定觸發撲克牌 CAPTCHA**，無法繞過
+- `crawler/stealth/`
+- `crawler/behavior/`
+- `crawler/session/`
+- `crawler/network/`
+- `crawler/detection/`
 
-應對策略：
-1. ✅ 列表頁 stealth 正常運作（主要資料來源）
-2. ⚡ Detail 頁快速探測（2 筆測試 → CAPTCHA → 放棄）
-3. ✅ Formatter 使用列表頁資料 fallback
-4. ⏱️ 執行時間優化：從 7 分鐘降到 **60 秒**
+可用以下指令驗證環境：
 
-### 10.4 來源健康檢查
-
-執行 `python check_sources.py` 可檢查所有來源狀態：
 ```bash
-python check_sources.py
+python verify_stealth.py
 ```
 
-輸出範例：
+## 13. 測試現況
+
+`tests/` 目前已涵蓋多個核心區塊，包括：
+
+- `filters`
+- `dedup`
+- `normalize`
+- `formatter`
+- `gov`
+- `g0v`
+- `detail_cache_store`
+- `detail_backfill`
+- `local_state_store`
+- `pipeline notifications`
+
+建議每次調整核心規則、通知格式或 crawler 行為後都跑一次：
+
+```bash
+pytest
 ```
-==========================================
-來源健康檢查
-==========================================
-taiwanbuying     ✅ 正常     (18 筆)
-gov_pcc          ✅ 正常     (965 筆)
-g0v              ⚠️ 無資料   (0 筆)
-==========================================
-```
-
-## 11. 後續可擴充方向
-- ✅ 已實作：多來源容錯、列表頁 fallback、快速探測
-- 🔄 進行中：開放資料 API 整合
-- 將 selector 設定改為 Azure App Configuration 或 Key Vault 管理
-- 增加人工審核 UI / Teams 通知
-- 加入快照測試（HTML regression）與整合測試
-
-## 12. HTML 結構變動容錯設計
-- 每個來源採「多組 selector 候選」策略。
-- selector 透過環境變數可熱調整。
-- 程式內含 TODO 註解提醒：若來源 DOM 大改，優先調整 selector 與查詢參數。
-
-## 13. 反偵測/Stealth 機制說明
-
-本專案已預設全面啟用 Playwright + Stealth 反偵測強化層，顯著提升動態網頁抓取成功率，降低被封鎖/驗證碼機率。
-
-### 13.1 功能亮點
-- **瀏覽器指紋隱匿**：自動遮蔽 `navigator.webdriver`、plugins、languages、WebGL 等自動化特徵，並隨機選用真實桌面 Chrome 指紋組合。
-- **人類行為模擬**：自動隨機捲動、滑鼠移動、hover/click、停留時間，避免機械式操作，並可於 `verify_stealth.py` 驗證。
-- **Identity/Proxy 輪轉**：自動切換多組身份與 Proxy，降低單一來源被封鎖風險。
-- **Session 持久化**：自動儲存/載入 cookies 與 localStorage，讓每次執行都像「回訪用戶」而非新機器人。
-- **自適應請求節奏**：完全取代固定 sleep，改用 jitter、cooldown window、指數退避，降低異常流量偵測。
-- **偵測事件記錄**：自動分類成功/封鎖/驗證碼/挑戰頁，失敗時自動截圖與 HTML 快照，便於除錯。
-
-### 13.2 啟用方式
-- **已預設啟用**（`STEALTH_ENABLED=true`），如需關閉可設 `STEALTH_ENABLED=false`。
-- Proxy/identity 輪轉功能可於 `.env` 設定 `PROXY_ENABLED=true` 並填入 `PROXY_LIST`。
-- 所有參數皆可於 `.env` 或 Azure App Settings 熱調整。
-
-### 13.3 主要檔案結構
-（見上方「專案結構」）
-
-### 13.4 相關環境變數
-- `STEALTH_ENABLED`：是否啟用反偵測（預設 true）
-- `STEALTH_HUMAN_BEHAVIOR`：啟用人類行為模擬（預設 true）
-- `STEALTH_SESSION_PERSISTENCE`：啟用 session 持久化
-- `STEALTH_MAX_RETRIES`：失敗重試次數
-- `STEALTH_THROTTLE_DELAY_MIN/MAX`：每次請求最小/最大間隔
-- `STEALTH_THROTTLE_COOLDOWN_AFTER`：每 N 次請求後 cooldown
-- `PROXY_ENABLED`、`PROXY_LIST`、`PROXY_STRATEGY`：Proxy 輪轉設定
-## 14. 常見 Stealth 問題排解
-- 若遇驗證碼/封鎖，建議：
-  - 增加 Proxy/identity 組數，調整 `STEALTH_THROTTLE_DELAY_MAX` 增加間隔
-  - 檢查 log 內 `batch_fetch_error`、`blocked`、`captcha` 訊息
-  - 執行 `python verify_stealth.py` 驗證環境與參數
-  - 如仍失敗，請參考 `STEALTH_MIGRATION_COMPLETE.md` 或聯絡維護者
-
-詳細請見 `local.settings.json.example`。
