@@ -2,12 +2,29 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from core.config import Settings
 from core.pipeline import run_monitor
+
+
+EXPECTED_PRODUCTION_BRANCH = "master"
+
+
+def _detect_current_git_branch() -> str:
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch = result.stdout.strip()
+    if not branch:
+        raise RuntimeError("git branch detection returned an empty branch")
+    return branch
 
 
 def main() -> int:
@@ -47,6 +64,29 @@ def main() -> int:
     file_handler.setFormatter(_ExtraFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     logging.getLogger().addHandler(file_handler)
     logger = logging.getLogger("bid-monitor-local")
+
+    if not args.no_send:
+        try:
+            current_branch = _detect_current_git_branch()
+        except Exception as exc:
+            logger.error(
+                "production_branch_guard_blocked",
+                extra={
+                    "expected_branch": EXPECTED_PRODUCTION_BRANCH,
+                    "current_branch": "",
+                    "detection_error": str(exc),
+                },
+            )
+            return 1
+        if current_branch != EXPECTED_PRODUCTION_BRANCH:
+            logger.error(
+                "production_branch_guard_blocked",
+                extra={
+                    "expected_branch": EXPECTED_PRODUCTION_BRANCH,
+                    "current_branch": current_branch,
+                },
+            )
+            return 1
 
     settings = Settings.from_env()
     if args.no_send:
